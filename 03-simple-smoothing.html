@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3 · Simple Smoothing Methods</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="03-simple-smoothing">
+<main><div class="content">
+<div class="kicker">Section 3</div>
+<h1>Simple Smoothing Methods</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section three covers the simplest filters, which are also the baseline every fancier method has to beat.
+A moving average replaces each sample with the mean of the last N samples. It is very effective at removing jitter, but it always runs N minus one over two frames behind the real motion.
+The exponential moving average keeps a single running value and blends each new sample in with a weight alpha. It uses almost no memory, and its lag is about one minus alpha over alpha frames.
+Gaussian and Savitzky-Golay filters look at future frames as well as past ones. That makes them zero-lag, which is great for analyzing a recorded video, but impossible for live feedback.
+The key lesson is that all of these use a fixed amount of smoothing, so they are either too jittery when you are still or too slow when you move fast.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#ma">Moving average</a></li><li><a href="#ema">Exponential moving average</a></li><li><a href="#gauss">Gaussian and Savitzky–Golay filtering</a></li><li><a href="#lim">Advantages and limitations for real-time video</a></li></ol></div>
+
+<h2 id="ma">3.1 Moving average</h2>
+<p>The causal moving average (MA) of window N outputs the mean of the most recent N samples:</p>
+<span class="eq">ŷ<sub>k</sub> = (1/N) · Σ<sub>i=0…N−1</sub> z<sub>k−i</sub></span>
+<p>If the noise is white with variance σ², averaging N samples cuts the variance to σ²/N, so N = 7 reduces jitter amplitude by √7 ≈ 2.6×. The price is <b>group delay</b>: the output represents the middle of the window, so it is always <b>(N−1)/2 frames late</b>. At 30 fps and N = 7 that is 3 frames, or 100 ms. Our experiment measures exactly 100 ms of lag for this filter (<a href="09-experiment.html">Section 9</a>).</p>
+<pre><code><span class="k">class</span> MovingAverage:
+    <span class="k">def</span> __init__(self, window=5):
+        self.window, self.buf = window, []
+    <span class="k">def</span> filter(self, x, t=None):
+        self.buf.append(x)
+        <span class="k">if</span> len(self.buf) &gt; self.window:
+            self.buf.pop(0)
+        <span class="k">return</span> sum(self.buf) / len(self.buf)</code></pre>
+<p>A variant worth knowing is the <b>moving median</b>. It has the same lag, but a single spike cannot pull the median far, so it removes one-frame outliers that an average would only spread out over N frames.</p>
+
+<h2 id="ema">3.2 Exponential moving average</h2>
+<p>The exponential moving average (EMA, also called a first-order low-pass or exponential smoothing) keeps one value of state:</p>
+<span class="eq">ŷ<sub>k</sub> = α · z<sub>k</sub> + (1 − α) · ŷ<sub>k−1</sub>,&nbsp;&nbsp; 0 &lt; α ≤ 1</span>
+<p>Unrolling the recursion shows it is a weighted average of all past samples with weights α(1−α)<sup>i</sup> that shrink exponentially. Small α means heavy smoothing. The average delay is about <b>(1−α)/α frames</b>: α = 0.3 gives about 2.3 frames (78 ms at 30 fps). α can also be set from a cutoff frequency f<sub>c</sub> and the sample period T<sub>e</sub>:</p>
+<span class="eq">τ = 1 / (2π f<sub>c</sub>),&nbsp;&nbsp;&nbsp; α = 1 / (1 + τ / T<sub>e</sub>)</span>
+<p>This form is important because it handles <b>variable frame rates</b>: if a phone drops a frame, T<sub>e</sub> gets bigger and α grows automatically. It is also the exact building block the One Euro filter uses in <a href="04-one-euro.html">Section 4</a>.</p>
+<pre><code><span class="k">class</span> EMA:
+    <span class="k">def</span> __init__(self, alpha=0.3):
+        self.alpha, self.y = alpha, None
+    <span class="k">def</span> filter(self, x, t=None):
+        self.y = x <span class="k">if</span> self.y <span class="k">is None else</span> self.alpha*x + (1-self.alpha)*self.y
+        <span class="k">return</span> self.y</code></pre>
+
+<figure>
+<img class="figimg" src="img/step_response.png" alt="Step response chart: the input jumps from 0 to 1 at about 330 ms. The One Euro output reaches 1 fastest, EMA next, and the moving average last after a linear ramp of about 200 ms." width="975" height="510" loading="lazy">
+<figcaption><b>Figure 3.1.</b> Step response of three causal filters at 30 fps. The step stands for a sudden real movement. The moving average ramps linearly over its window; EMA approaches exponentially; the One Euro filter (Section 4) speeds up because the step is fast. Figure created for this tutorial.</figcaption>
+</figure>
+
+<h2 id="gauss">3.3 Gaussian and Savitzky–Golay filtering (offline)</h2>
+<p>If the whole video is recorded first (for example, a coach reviewing a set after it ends), we can use frames on both sides of each sample. A <b>Gaussian filter</b> convolves the signal with a centered Gaussian kernel of width σ frames. Because the kernel is symmetric, it has <b>zero phase delay</b>: peaks stay where they are.</p>
+<p>The <b>Savitzky–Golay</b> filter fits a low-order polynomial (often cubic) to a sliding window by least squares and takes the polynomial's value at the center <a class="cite" href="bibliography.html#r5">[5]</a>. It is equivalent to convolution with a fixed set of coefficients, so it is fast, and because a cubic can bend, it preserves the height of peaks (like the bottom of a squat) better than a plain average. It can also return smoothed derivatives directly, which is convenient for velocity.</p>
+<pre><code><span class="k">from</span> scipy.ndimage <span class="k">import</span> gaussian_filter1d
+<span class="k">from</span> scipy.signal <span class="k">import</span> savgol_filter
+smooth_g  = gaussian_filter1d(x, sigma=2.0, mode=<span class="c">"nearest"</span>)
+smooth_sg = savgol_filter(x, window_length=11, polyorder=3)
+vel_sg    = savgol_filter(x, 11, 3, deriv=1, delta=1/30)  <span class="c"># smoothed velocity</span></code></pre>
+<p>These offline filters produced the lowest angle error in our experiment (2.3–2.6° RMSE vs. 3.0° for the best causal filter). They set a useful <b>upper bound</b>: no live filter can beat a good zero-lag offline filter, so they tell you how much room for improvement is left.</p>
+
+<h2 id="lim">3.4 Advantages and limitations for real-time video</h2>
+<div class="table-wrap"><table>
+<tr><th>Filter</th><th>Causal (live)?</th><th>Lag</th><th>Spikes</th><th>Cost per sample</th><th>Main weakness</th></tr>
+<tr><td>Moving average</td><td>Yes</td><td>(N−1)/2 frames</td><td><span class="pill bad">spreads</span></td><td>O(1) with running sum</td><td>Fixed lag; flattens squat bottoms</td></tr>
+<tr><td>Moving median</td><td>Yes</td><td>(N−1)/2 frames</td><td><span class="pill good">removes</span></td><td>O(N log N)</td><td>Same lag, blocky output</td></tr>
+<tr><td>EMA</td><td>Yes</td><td>≈ (1−α)/α frames</td><td><span class="pill bad">spreads</span></td><td>O(1), one value</td><td>One α for all speeds</td></tr>
+<tr><td>Gaussian</td><td>No</td><td>0</td><td><span class="pill warn">spreads</span></td><td>O(kernel)</td><td>Needs future frames</td></tr>
+<tr><td>Savitzky–Golay</td><td>No</td><td>0</td><td><span class="pill warn">spreads</span></td><td>O(window)</td><td>Needs future frames; can ring at edges</td></tr>
+</table></div>
+<div class="callout"><span class="title">The core problem</span>Every filter on this page uses a <i>fixed</i> amount of smoothing. Strong smoothing is right when the person is holding still (we want no jitter), and weak smoothing is right during a fast movement (we want no lag). A fixed filter can only pick one. The next two sections solve this in two different ways: the One Euro filter changes its cutoff with speed, and the Kalman filter uses a motion model to predict where the joint is going.</div>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Moving average: variance ÷ N, lag (N−1)/2 frames. A median variant removes spikes.</li>
+<li>EMA: one line of code, lag ≈ (1−α)/α frames; α can be computed from a cutoff frequency.</li>
+<li>Gaussian and Savitzky–Golay are zero-lag but offline only; use them for post-workout analysis and as a quality reference.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

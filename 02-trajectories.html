@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2 · Landmark Trajectories</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="02-trajectories">
+<main><div class="content">
+<div class="kicker">Section 2</div>
+<h1>Pose Landmark Trajectories</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section two. To filter keypoints we first have to treat them as signals.
+A single joint over time is a trajectory: a list of x and y positions, sometimes a depth value z, and a confidence score for every frame.
+It helps to normalize these coordinates, for example by torso length, so a filter tuned for one person or camera distance works for another.
+From positions we can compute velocity and acceleration with finite differences. These are exactly what the One Euro and Kalman filters use, but they are also very sensitive to noise.
+Finally, we will write down a simple noise model with four parts: fast white jitter, slow drift, single-frame spikes, and gaps. Every filter in this tutorial can be judged by which of those four parts it handles.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#rep">Representing a joint as (x, y) or (x, y, z)</a></li><li><a href="#conf">Landmark confidence scores</a></li><li><a href="#vel">Velocity and acceleration of keypoints</a></li><li><a href="#noise">Sources of trajectory noise</a></li></ol></div>
+
+<h2 id="rep">2.1 Representing a joint as (x, y) or (x, y, z)</h2>
+<p>For a video with frames at times t<sub>0</sub>, t<sub>1</sub>, …, joint <i>j</i> becomes the sequence</p>
+<span class="eq">p<sub>j</sub>(t<sub>k</sub>) = ( x<sub>j,k</sub>, y<sub>j,k</sub> [, z<sub>j,k</sub>] ),&nbsp;&nbsp; with confidence c<sub>j,k</sub> ∈ [0, 1]</span>
+<p>MediaPipe gives <code>x</code> and <code>y</code> normalized to [0, 1] by image width and height, and <code>z</code> as a depth relative to the hips, in roughly the same scale as <code>x</code> <a class="cite" href="bibliography.html#r3">[3]</a>. It also returns <i>world landmarks</i> in meters centered on the hips. Two practical choices matter for filtering:</p>
+<ul>
+<li><b>Filter each coordinate separately.</b> Every filter in this tutorial is a 1D filter. A full skeleton of 33 landmarks × 2 coordinates means 66 independent filter instances. This is cheap and easy to reason about, but it ignores the fact that bones have fixed length (see <a href="10-limitations.html">Section 10</a>).</li>
+<li><b>Normalize scale.</b> A person 2 m from the camera has keypoints that move four times as far in pixels as the same person 4 m away. If filter parameters are in pixels, they will behave differently at different distances. Dividing by a body length (torso or hip-to-ankle) or by a fixed bounding box, as Ullah et al. do <a class="cite" href="bibliography.html#r4">[4]</a>, makes the parameters transferable.</li>
+</ul>
+
+<figure>
+<svg viewBox="0 0 640 260" role="img" aria-label="Side-view leg with hip, knee and ankle keypoints and the knee angle theta between thigh and shank." style="width:100%;height:auto">
+  <g font-size="13" fill="var(--ink)">
+  <line x1="200" y1="60" x2="300" y2="150" stroke="var(--ink-2)" stroke-width="6" stroke-linecap="round"/>
+  <line x1="300" y1="150" x2="250" y2="235" stroke="var(--ink-2)" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="200" cy="60" r="9" fill="var(--s-blue)"/><circle cx="300" cy="150" r="9" fill="var(--s-orange)"/><circle cx="250" cy="235" r="9" fill="var(--s-aqua)"/>
+  <path d="M 276 128 A 32 32 0 0 0 284 177" fill="none" stroke="var(--accent)" stroke-width="2"/>
+  <text x="258" y="158" fill="var(--accent)" font-weight="700">θ</text>
+  <text x="140" y="56">hip (23)</text><text x="314" y="154">knee (25)</text><text x="166" y="240">ankle (27)</text>
+  <text x="380" y="70" font-weight="700">Per frame k, per joint j:</text>
+  <text x="380" y="95" fill="var(--ink-2)">x, y ∈ [0,1]  (image-normalized)</text>
+  <text x="380" y="117" fill="var(--ink-2)">z  (relative depth)</text>
+  <text x="380" y="139" fill="var(--ink-2)">visibility, presence ∈ [0,1]</text>
+  <text x="380" y="175" font-weight="700">Derived signals:</text>
+  <text x="380" y="198" fill="var(--ink-2)">θ = ∠(hip, knee, ankle)</text>
+  <text x="380" y="220" fill="var(--ink-2)">ω = dθ/dt,  v = dp/dt</text>
+  </g>
+</svg>
+<figcaption><b>Figure 2.1.</b> The three MediaPipe landmarks used for the left knee angle (indices from the MediaPipe 33-point model <a class="cite" href="bibliography.html#r3">[3]</a>). Diagram created for this tutorial.</figcaption>
+</figure>
+
+<h2 id="conf">2.2 Landmark confidence scores</h2>
+<p>Each landmark comes with a score that says how much the network trusts it. In MediaPipe, <code>presence</code> is the likelihood that the landmark is in the image at all, and <code>visibility</code> is the likelihood that it is in the image <i>and not occluded</i> <a class="cite" href="bibliography.html#r3">[3]</a>. YOLO-pose and OpenPose output a single per-keypoint confidence.</p>
+<p>Confidence is the most useful extra input a filter can get, because it tells the filter <i>which</i> frames are noisy. Two ways to use it:</p>
+<ul>
+<li><b>Hard gate:</b> if c &lt; threshold (often 0.5), treat the keypoint as missing. Simple, but throws away partially useful data.</li>
+<li><b>Soft weight:</b> keep the measurement but trust it less. In a Kalman filter this means increasing the measurement noise, e.g. R<sub>k</sub> = R / c<sub>k</sub>². This is what the Kalman filter in our experiment does (<a href="05-kalman.html">Section 5</a>).</li>
+</ul>
+<div class="callout warn"><span class="title">Caution</span>Confidence scores are not calibrated probabilities. A landmark can be wrong with high confidence, for example when left and right legs are swapped. Confidence helps with blur and occlusion; it does not catch every error.</div>
+
+<h2 id="vel">2.3 Velocity and acceleration of keypoints</h2>
+<p>Velocity and acceleration are estimated by finite differences:</p>
+<span class="eq">v<sub>k</sub> ≈ (p<sub>k</sub> − p<sub>k−1</sub>) / Δt &nbsp;&nbsp;(backward, causal) &nbsp;&nbsp;&nbsp; v<sub>k</sub> ≈ (p<sub>k+1</sub> − p<sub>k−1</sub>) / 2Δt &nbsp;&nbsp;(central, needs one future frame)</span>
+<span class="eq">a<sub>k</sub> ≈ (p<sub>k+1</sub> − 2p<sub>k</sub> + p<sub>k−1</sub>) / Δt²</span>
+<p>Ullah et al. use the central difference for angular velocity <a class="cite" href="bibliography.html#r4">[4]</a>, which is fine for offline scoring but adds one frame of delay in a live app. If position noise has standard deviation σ, the backward-difference velocity has noise σ·√2/Δt and acceleration about σ·√6/Δt². At 30 fps that is a factor of about 42 for velocity and 2200 for acceleration. This is why every filter that uses speed (the One Euro filter) or a velocity state (the Kalman filter) has to smooth or model the derivative too, not just take it raw.</p>
+<p>The same second difference is also our <b>jitter metric</b>: on a still or slowly moving joint, the true second difference is near zero, so the RMS of the second difference measures how much the signal shakes.</p>
+
+<h2 id="noise">2.4 Sources of trajectory noise</h2>
+<p>A simple but useful model of what the detector gives us is</p>
+<span class="eq">z<sub>k</sub> = p<sub>k</sub> + w<sub>k</sub> + d<sub>k</sub> + s<sub>k</sub>,&nbsp;&nbsp; with some z<sub>k</sub> missing</span>
+<ul>
+<li><b>w<sub>k</sub> – white jitter.</b> Independent each frame. Low-pass filters handle this well.</li>
+<li><b>d<sub>k</sub> – slow drift.</b> Correlated over many frames (lighting, crop shifts). Hard to remove because it looks like real motion.</li>
+<li><b>s<sub>k</sub> – spikes.</b> Rare, large, one or two frames (blur, a swap). Averaging spreads them out instead of removing them; they need outlier rejection.</li>
+<li><b>Gaps.</b> No detection, or detection with very low confidence. Need holding, interpolation or prediction.</li>
+</ul>
+<p>The experiment in <a href="09-experiment.html">Section 9</a> builds a squat signal with exactly these four components so we can see which filter handles which.</p>
+
+<figure>
+<img class="figimg" src="img/exp_raw_vs_truth.png" alt="Line chart of knee angle over 20 seconds: the raw signal follows the true squat curve but shakes constantly, with spikes during a motion-blur burst around 4.8 seconds and a dropout around 16.3 seconds." width="1500" height="540" loading="lazy">
+<figcaption><b>Figure 2.2.</b> Knee angle computed from raw keypoints (gray) vs. the true angle (dashed) on the simulated squat sequence. You can see white jitter everywhere, spikes, a motion-blur burst and a dropout. Figure created for this tutorial.</figcaption>
+</figure>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Treat each landmark coordinate as a 1D time series with a confidence value per sample.</li>
+<li>Normalize by body size so filter parameters transfer between people and camera distances.</li>
+<li>Finite-difference velocity and acceleration amplify noise by roughly fps and fps².</li>
+<li>Noise has four parts (jitter, drift, spikes, gaps), and each needs a different fix.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

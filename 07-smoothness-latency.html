@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7 · Smoothness vs. Latency</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="07-smoothness-latency">
+<main><div class="content">
+<div class="kicker">Section 7</div>
+<h1>Smoothness vs. Latency</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section seven is about the central tradeoff of this whole topic: smoothness costs time.
+Every causal filter averages the present with the past, so its output is always a little behind. For a moving average of seven frames that delay is a hundred milliseconds.
+Lag is not only a display problem. When the filter is late during a fast squat, it also cuts off the bottom of the movement. In our experiment the moving average and the exponential filter reported squats five to seven degrees shallower than they really were.
+So the right amount of smoothing depends on the exercise: slow, controlled movements can afford heavy smoothing, and explosive movements cannot.
+We will finish with the real-time budget on a phone, where the filter itself is almost free, but the latency it adds is not.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#lag">Filter lag</a></li><li><a href="#speed">Fast vs. slow exercises</a></li><li><a href="#damage">Why too much smoothing can damage motion measurements</a></li><li><a href="#mobile">Real-time constraints on mobile devices</a></li></ol></div>
+
+<h2 id="lag">7.1 Filter lag</h2>
+<p>A causal filter can only use past samples, so any averaging pulls the output toward where the joint <i>was</i>. For linear filters this delay can be computed exactly:</p>
+<div class="table-wrap"><table>
+<tr><th>Filter (30 fps)</th><th>Theoretical delay</th><th class="num">Measured lag on fast reps</th></tr>
+<tr><td>Moving average, N = 7</td><td>(N−1)/2 = 3 frames = 100 ms</td><td class="num">100 ms</td></tr>
+<tr><td>EMA, α = 0.3</td><td>(1−α)/α ≈ 2.3 frames ≈ 78 ms</td><td class="num">67 ms</td></tr>
+<tr><td>One Euro, f<sub>c,min</sub> = 1, β = 15</td><td>speed-dependent</td><td class="num">33 ms</td></tr>
+<tr><td>Kalman CV, q = 10</td><td>≈ 0 in steady motion</td><td class="num">0 ms</td></tr>
+<tr><td>Gaussian / Savitzky–Golay (offline)</td><td>0 (but needs future frames)</td><td class="num">0 ms</td></tr>
+</table></div>
+<p>Measured lag is the shift that best aligns the filtered knee angle with the truth, with 1-frame (33 ms) resolution. The general rule behind the table: for a fixed linear filter, reducing noise variance by a factor k requires averaging over about k samples, and that pushes the delay up roughly in proportion. You cannot get both for free. The One Euro filter escapes this by changing k with speed; the Kalman filter escapes it by predicting forward with a velocity estimate.</p>
+
+<figure>
+<img class="figimg" src="img/exp_fast_lag.png" alt="Line chart of knee angle during fast squats from 16.8 to 19.2 seconds. Moving average and EMA curves are shifted right of the true curve and do not go as low at the bottom; One Euro is close to truth; Kalman slightly overshoots the peaks and valleys." width="1500" height="540" loading="lazy">
+<figcaption><b>Figure 7.1.</b> Fast squats at one rep per second. The moving average (yellow) and EMA (green) are visibly late and shallow; One Euro (blue) follows closely; Kalman (orange) has no lag but overshoots at the top and bottom of each rep. Figure created for this tutorial.</figcaption>
+</figure>
+
+<figure>
+<img class="figimg" src="img/exp_rest_jitter.png" alt="Line chart of knee angle while standing still between 10.3 and 13.7 seconds. The raw signal wobbles several degrees; EMA and One Euro are almost flat; Kalman is in between." width="1500" height="510" loading="lazy">
+<figcaption><b>Figure 7.2.</b> The other side of the tradeoff: standing still. Here heavy smoothing is exactly what we want. One Euro and EMA are nearly flat; Kalman, tuned to react quickly, lets more jitter through. Figure created for this tutorial.</figcaption>
+</figure>
+
+<h2 id="speed">7.2 Fast vs. slow exercises</h2>
+<p>Because the best setting depends on how fast joints move, a single global filter setting is a compromise. Suggested starting points (normalized coordinates, 30 fps):</p>
+<div class="table-wrap"><table>
+<tr><th>Exercise type</th><th>Examples</th><th>Priority</th><th>Starting point</th></tr>
+<tr><td>Isometric / holds</td><td>Plank, wall sit, balance</td><td>No jitter</td><td>One Euro f<sub>c,min</sub> 0.5, β 5; or EMA α 0.15</td></tr>
+<tr><td>Slow, controlled</td><td>Tempo squats, PT range-of-motion</td><td>Accurate angles</td><td>One Euro f<sub>c,min</sub> 1.0, β 15</td></tr>
+<tr><td>Moderate speed</td><td>Push-ups, lunges, curls</td><td>Correct rep count</td><td>One Euro f<sub>c,min</sub> 1.0, β 30; or Kalman q 10–20</td></tr>
+<tr><td>Explosive</td><td>Jump squats, swings, sprints</td><td>Low lag, peak values</td><td>Kalman q 20–60 with gating; or a higher camera fps</td></tr>
+</table></div>
+<p>These are starting values from our experiment and should be tuned with the procedure in Section 4.4. Another option is to switch settings by exercise phase: heavier smoothing while the person is setting up or holding, lighter during the working set.</p>
+
+<h2 id="damage">7.3 Why too much smoothing can damage motion measurements</h2>
+<p>Lag is easy to see. The more serious problem for exercise analysis is <b>attenuation</b>: a low-pass filter shrinks fast peaks. In our fast-squat phase (1 rep/s), the average error at the bottom of each rep was:</p>
+<div class="table-wrap"><table>
+<tr><th>Filter</th><th class="num">Bottom-of-rep angle error</th><th>Effect</th></tr>
+<tr><td>Moving average</td><td class="num">+4.9°</td><td>Squat reported shallower than real</td></tr>
+<tr><td>EMA</td><td class="num">+6.7°</td><td>Squat reported shallower than real</td></tr>
+<tr><td>One Euro</td><td class="num">+1.3°</td><td>Close</td></tr>
+<tr><td>Kalman</td><td class="num">−2.2°</td><td>Overshoot: reported deeper than real</td></tr>
+</table></div>
+<p>(Positive = filtered minimum angle is larger than the true minimum. During slow reps all causal filters were within about 3°.) If an app checks "did the user reach 90° knee flexion?", a heavily smoothed signal can tell a user who did reach depth that they did not. The same happens to <b>peak angular velocity</b>, which coaches use as a power proxy: an over-smoothed signal underestimates it, and an under-smoothed one overestimates it because of jitter. In our test the raw signal's peak angular velocity was 424°/s against a true 251°/s, while moving average and EMA gave about 265°/s.</p>
+<p>Biomechanics pipelines care about this. Eghbalian and Desai show that errors from the upstream pose estimator carry through into downstream kinematic, kinetic and muscle-level predictions <a class="cite" href="bibliography.html#r10">[10]</a>; a filter that distorts the trajectory adds its own error on top.</p>
+
+<h2 id="mobile">7.4 Real-time constraints on mobile devices</h2>
+<p>On a phone, the filter's <b>compute</b> cost is negligible. In our Python timing, one One Euro update took about 1.5 µs and a NumPy Kalman update about 20 µs (most of that is NumPy overhead on tiny matrices; the hand-written JavaScript version in this site has no matrices). Even 66 Kalman filters is under 2 ms, while the pose network itself typically takes tens of milliseconds per frame. What matters on mobile is <b>latency and timing</b>:</p>
+<ul>
+<li><b>End-to-end budget.</b> Camera capture + inference + filter delay + rendering. Live feedback that should feel immediate leaves little room for 100 ms of filter delay on top of everything else.</li>
+<li><b>Variable frame rate.</b> Phones throttle when hot and skip frames when busy. Use real timestamps (T<sub>e</sub>, Δt) instead of assuming 30 fps; the EMA-from-cutoff formula, One Euro and Kalman all support this directly, a fixed-N moving average does not.</li>
+<li><b>Lower fps is worse twice.</b> At 15 fps each frame of lag is 67 ms instead of 33 ms, and motion blur is larger.</li>
+<li><b>Display vs. analytics can differ.</b> The skeleton drawn on screen can use light smoothing for responsiveness, while the rep counter can use a few frames of delayed interpolation or even an offline smoother at the end of each rep, since a count shown 100 ms late is fine.</li>
+</ul>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Fixed linear filters trade noise for delay: MA-7 = 100 ms, EMA(0.3) ≈ 70–80 ms at 30 fps.</li>
+<li>Smoothing also shrinks peaks: squat depth was underestimated by 5–7° with MA and EMA on fast reps.</li>
+<li>Pick settings per exercise speed, and consider separate filters for display and analytics.</li>
+<li>On mobile, the issue is latency and variable frame timing, not compute.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

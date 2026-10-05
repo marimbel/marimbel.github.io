@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6 · Missing Keypoints</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="06-missing-keypoints">
+<main><div class="content">
+<div class="kicker">Section 6</div>
+<h1>Handling Missing and Low-Confidence Keypoints</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section six is about the frames where the detector does not give us a usable keypoint at all.
+The first decision is a confidence threshold: below it, we treat the keypoint as missing rather than feeding garbage into the filter.
+Then we have three choices. We can hold the last good value, which is simple but freezes the joint. We can interpolate between the good values on both sides of the gap, which is accurate but only works after the fact. Or we can predict through the gap with a motion model like the Kalman filter, which works live but drifts if the gap is long.
+Finally, we need a rule for when to stop guessing. If a gap is too long, or the estimate violates the body's geometry, the honest answer is to mark the joint as lost and tell the app, instead of inventing motion.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#thr">Confidence thresholds</a></li><li><a href="#interp">Interpolation</a></li><li><a href="#pred">Prediction during short occlusions</a></li><li><a href="#discard">When a landmark should be discarded instead of estimated</a></li></ol></div>
+
+<h2 id="thr">6.1 Confidence thresholds</h2>
+<p>Feeding a blurred, low-confidence keypoint into a low-pass filter drags the output toward a wrong position for several frames. The simplest defense is a threshold: if c<sub>k</sub> &lt; c<sub>min</sub>, mark the sample as missing. We used c<sub>min</sub> = 0.5 on MediaPipe visibility.</p>
+<ul>
+<li><b>Too high</b> (e.g. 0.9): many good frames are thrown away, especially for the far-side limbs in a side view, so the filter is "predicting" most of the time.</li>
+<li><b>Too low</b> (e.g. 0.2): blurred and occluded guesses get through.</li>
+<li><b>Hysteresis helps:</b> require c &gt; 0.6 to start trusting a joint again after it drops below 0.4. This stops a joint near the threshold from flickering between "tracked" and "lost."</li>
+</ul>
+<p>A good way to pick c<sub>min</sub> is to plot confidence against error on a few labeled frames and choose the knee of the curve. When you have a Kalman filter, you can use a low hard threshold and let confidence-scaled R (Section 5.4) handle the gray zone.</p>
+
+<h2 id="interp">6.2 Interpolation</h2>
+<p>If the whole clip is available (offline analysis), the best estimate for a short gap usually comes from the good samples on <i>both</i> sides. Linear interpolation is enough for gaps of a few frames; cubic splines follow curved motion better for longer gaps but can overshoot.</p>
+<pre><code><span class="k">def</span> interpolate_gaps(x, valid, max_gap=10):
+    <span class="c">"""Linear interpolation over gaps no longer than max_gap frames.
+    Longer gaps stay NaN: the landmark is declared lost, not invented."""</span>
+    x = np.asarray(x, float).copy(); x[~valid] = np.nan
+    out, i, n = x.copy(), 0, len(x)
+    <span class="k">while</span> i &lt; n:
+        <span class="k">if</span> np.isnan(x[i]):
+            j = i
+            <span class="k">while</span> j &lt; n <span class="k">and</span> np.isnan(x[j]): j += 1
+            <span class="k">if</span> i &gt; 0 <span class="k">and</span> j &lt; n <span class="k">and</span> (j - i) &lt;= max_gap:
+                out[i:j] = np.interp(range(i, j), [i-1, j], [x[i-1], x[j]])
+            i = j
+        <span class="k">else</span>: i += 1
+    <span class="k">return</span> out</code></pre>
+<p>This same strategy shows up beyond exercise analysis. Hu and Ye extract hand and object trajectories from human manipulation videos for robot learning; they run a point tracker forward and backward, discard tracks where the two directions disagree, and then use trajectory interpolation for short occlusions and missing detections <a class="cite" href="bibliography.html#r9">[9]</a>. The bidirectional consistency check is a nice idea for exercise video too: a keypoint that does not survive a forward-backward check is probably wrong even if its confidence is high.</p>
+<p>For live feedback you cannot wait for the far side of a gap. A compromise is <b>delayed interpolation</b>: buffer a few frames (say 3, or 100 ms) so short gaps can be filled before the value is displayed. This costs a fixed latency, which Section 7 discusses.</p>
+
+<h2 id="pred">6.3 Prediction during short occlusions</h2>
+<p>In a causal system the options during a gap are:</p>
+<div class="table-wrap"><table>
+<tr><th>Strategy</th><th>What it does</th><th>Good for</th><th>Bad for</th></tr>
+<tr><td>Hold last value</td><td>Repeats the last trusted position</td><td>Still poses, very short blips</td><td>Gaps during movement (joint freezes, then jumps)</td></tr>
+<tr><td>Kalman predict</td><td>Extrapolates with the last velocity</td><td>Gaps during steady motion</td><td>Gaps at turning points (overshoots)</td></tr>
+<tr><td>Delayed interpolation</td><td>Waits k frames, then interpolates</td><td>Gaps ≤ k frames</td><td>Adds k frames of latency always</td></tr>
+<tr><td>Kinematic fill</td><td>Uses bone lengths and other joints to place the missing joint</td><td>One joint missing, neighbors visible</td><td>More code; needs a body model</td></tr>
+</table></div>
+
+<figure>
+<img class="figimg" src="img/exp_occlusion.png" alt="Two panels of knee y position. Left: a motion-blur burst where many raw points are scattered and marked rejected; both filters ignore them and stay near the true path. Right: a full dropout during a fast rep; both filters stay flat during the gap and then jump, with Kalman catching up faster than One Euro." width="1500" height="510" loading="lazy">
+<figcaption><b>Figure 6.1.</b> Left: during a motion-blur burst, confidence gating rejects the scattered points (red ×) and both filters stay close to the true path. Right: a 7-frame dropout that starts at the top of a fast rep. Neither "hold" (One Euro) nor constant-velocity prediction (Kalman) knows the person started descending, because velocity was near zero when the gap began. After the gap, Kalman recovers in about 1 frame, the One Euro output in about 5. Figure created for this tutorial.</figcaption>
+</figure>
+<p>The right panel shows an important limit of prediction: <b>a motion model can only extrapolate what it has already seen</b>. A dropout at the turning point of a squat is the worst case for constant-velocity prediction. A rep-aware model (for example, one that knows the squat cycle) could do better, which is one motivation for the learned temporal models in Section 10.</p>
+
+<h2 id="discard">6.4 When a landmark should be discarded instead of estimated</h2>
+<p>Filling gaps makes the output look clean, which is exactly why it is dangerous: downstream code cannot tell a measured angle from an invented one. Discard (output "unknown") when any of these hold:</p>
+<ul>
+<li><b>Gap too long.</b> Past roughly 0.3–0.5 s, predictions drift far from reality. In the Kalman filter, a natural rule is to stop when the predicted position variance P<sub>00</sub> exceeds a limit.</li>
+<li><b>Body geometry is violated.</b> Thigh and shank lengths are constant for a person. If the estimated hip–knee distance differs from its running median by more than ~25%, one of the points is wrong.</li>
+<li><b>Left/right swap suspected.</b> If swapping the left and right labels makes both joints much closer to their predictions, it was a swap; fix it rather than filter it.</li>
+<li><b>The joint was never seen reliably.</b> Do not initialize a filter from a low-confidence first frame.</li>
+</ul>
+<pre><code><span class="k">def</span> bone_ok(hip, knee, ankle, ref_thigh, ref_shank, tol=0.25):
+    thigh = np.linalg.norm(hip - knee); shank = np.linalg.norm(knee - ankle)
+    <span class="k">return</span> abs(thigh/ref_thigh - 1) &lt; tol <span class="k">and</span> abs(shank/ref_shank - 1) &lt; tol</code></pre>
+<div class="callout good"><span class="title">Design rule</span>Pass a validity flag along with every filtered keypoint. The rep counter and form checker should skip frames where any of their joints are invalid, rather than act on a guess. A missed form tip is much less harmful than a wrong one.</div>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Gate on confidence (with hysteresis) before filtering.</li>
+<li>Offline: interpolate short gaps from both sides. Live: hold, predict, or buffer a few frames.</li>
+<li>Prediction cannot anticipate turning points it has not seen.</li>
+<li>Declare a joint lost when gaps are long or geometry breaks, and propagate that flag downstream.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

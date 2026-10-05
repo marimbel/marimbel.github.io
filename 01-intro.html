@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1 · Temporal Instability</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="01-intro">
+<main><div class="content">
+<div class="kicker">Section 1</div>
+<h1>Introduction to Temporal Instability in Pose Estimation</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section one. Before we can fix jitter, we need to understand where it comes from.
+Most pose estimators are trained on still images, so even when they run on video they mostly estimate each frame on its own. Small changes between frames, like motion blur, a sleeve covering the elbow, or the person turning sideways, move the predicted keypoint a few pixels back and forth even when the person is standing still.
+A few pixels does not sound like much, but exercise apps compute angles from three keypoints and speeds from differences between frames. Both of those operations amplify noise. A two degree wobble in a knee angle becomes almost seventy degrees per second of fake angular velocity at thirty frames per second.
+That is why apps that skip temporal filtering count extra repetitions and flash false form warnings. The rest of this tutorial is about building the filter layer that prevents this.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#how">How video pose estimation works</a></li><li><a href="#why">Why keypoints jitter from frame to frame</a></li><li><a href="#matter">Why unstable landmarks matter for exercise analysis</a></li></ol></div>
+
+<h2 id="how">1.1 How video pose estimation works</h2>
+<p>A 2D human pose estimator takes an image and returns a fixed list of body <b>keypoints</b> (also called landmarks or joints), each with an image position and a score. Tharatipyakul et al. reviewed 45 movement-feedback systems and found that almost all of them use a convolutional network for this step and then hand the keypoints to a separate assessment module <a class="cite" href="bibliography.html#r1">[1]</a>. That separation is exactly why a filtering layer is needed: the assessment module receives whatever the network outputs, frame by frame.</p>
+<p>There are two common ways networks produce keypoints:</p>
+<ul>
+  <li><b>Heatmap methods</b> (OpenPose, HRNet, many YOLO-pose heads) predict a probability map for each joint at a reduced resolution, then take the peak. Because the map is often 1/4 of the input size, the peak location is quantized and moves in small jumps.</li>
+  <li><b>Regression methods</b> predict the coordinates directly. BlazePose, the model behind MediaPipe Pose, uses heatmaps during training but regresses coordinates at inference so it can run in real time on a phone <a class="cite" href="bibliography.html#r2">[2]</a>.</li>
+</ul>
+<p>For video, BlazePose uses a <b>detector–tracker</b> design: a person detector runs on the first frame (or after tracking is lost), and on later frames the region of interest is predicted from the previous frame's pose <a class="cite" href="bibliography.html#r2">[2]</a>. This saves time, but each frame's landmarks are still a fresh prediction inside that crop. Nothing in the network forces frame <i>t</i> to agree with frame <i>t−1</i>. MediaPipe's Pose Landmarker returns 33 landmarks per person, each with normalized <code>x</code>, <code>y</code>, a relative depth <code>z</code>, and <code>visibility</code> and <code>presence</code> scores <a class="cite" href="bibliography.html#r3">[3]</a>.</p>
+
+<figure>
+<svg viewBox="0 0 700 210" role="img" aria-label="Three video frames each processed independently by the network, producing slightly different knee positions." style="width:100%;height:auto">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="12" fill="var(--ink)">
+  <g id="f">
+    <rect x="20" y="20" width="160" height="110" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="100" y="40" text-anchor="middle" fill="var(--ink-2)">frame t−1</text>
+    <circle cx="90" cy="85" r="5" fill="var(--s-blue)"/>
+  </g>
+  <rect x="270" y="20" width="160" height="110" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+  <text x="350" y="40" text-anchor="middle" fill="var(--ink-2)">frame t</text>
+  <circle cx="348" cy="80" r="5" fill="var(--s-blue)"/><circle cx="340" cy="85" r="5" fill="none" stroke="var(--muted)" stroke-dasharray="2 2"/>
+  <rect x="520" y="20" width="160" height="110" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+  <text x="600" y="40" text-anchor="middle" fill="var(--ink-2)">frame t+1 (blurred)</text>
+  <circle cx="612" cy="70" r="5" fill="var(--bad)"/><circle cx="590" cy="85" r="5" fill="none" stroke="var(--muted)" stroke-dasharray="2 2"/>
+  <text x="100" y="155" text-anchor="middle">CNN → knee (90, 85)</text>
+  <text x="350" y="155" text-anchor="middle">CNN → knee (348, 80)</text>
+  <text x="600" y="155" text-anchor="middle">CNN → knee (612, 70), conf 0.31</text>
+  <g stroke="var(--muted)" stroke-width="1.5" marker-end="url(#a1)"><line x1="185" y1="75" x2="265" y2="75"/><line x1="435" y1="75" x2="515" y2="75"/></g>
+  <text x="225" y="66" text-anchor="middle" fill="var(--ink-2)" font-size="11">no memory</text>
+  <text x="475" y="66" text-anchor="middle" fill="var(--ink-2)" font-size="11">no memory</text>
+  <text x="350" y="195" text-anchor="middle" fill="var(--ink-2)" font-size="12">Dashed circle = where the knee really is. Each frame's estimate is made without looking at the others.</text>
+  </g>
+</svg>
+<figcaption><b>Figure 1.1.</b> Frame-independent estimation. The knee barely moves in reality, but each prediction lands somewhere slightly different, and the blurred frame produces a low-confidence outlier. Diagram created for this tutorial.</figcaption>
+</figure>
+
+<h2 id="why">1.2 Why frame-to-frame keypoints jitter</h2>
+<p>Even a perfectly still person produces a keypoint that wanders by a few pixels. The main causes are:</p>
+<div class="table-wrap"><table>
+<tr><th>Cause</th><th>What you see</th><th>Typical size</th></tr>
+<tr><td>Quantization of heatmaps / regression noise</td><td>Fast, random 1–2 px shaking around the true point</td><td>Small, every frame</td></tr>
+<tr><td>Crop (ROI) changes in the tracker</td><td>Whole skeleton shifts slightly when the crop moves</td><td>Small–medium, correlated over joints</td></tr>
+<tr><td>Motion blur during fast reps</td><td>Keypoint lags or jumps; confidence drops</td><td>Medium, a few frames</td></tr>
+<tr><td>Self-occlusion (arm in front of torso, far leg hidden)</td><td>Joint guessed from context, drifts, or disappears</td><td>Large, many frames</td></tr>
+<tr><td>Left/right ambiguity (side view)</td><td>Left and right knees swap labels for one or more frames</td><td>Very large, sudden</td></tr>
+<tr><td>Lighting, clothing, video compression</td><td>Slow wobble and occasional spikes</td><td>Varies</td></tr>
+</table></div>
+<p>Notice that these are not all the same kind of error. Fast white noise, slow drift, single-frame spikes, multi-frame gaps and identity swaps each need a different tool. A single moving average will not fix all of them, which is why later sections add confidence gating, prediction and outlier rejection on top of smoothing.</p>
+
+<h2 id="matter">1.3 Why unstable landmarks matter for exercise analysis</h2>
+<p>Exercise apps rarely use keypoints directly. They compute <b>joint angles</b> from three keypoints, <b>velocities</b> from differences between frames, and <b>events</b> (a rep, a phase change, a form error) by comparing those signals to thresholds. Each step makes noise worse:</p>
+<ol>
+  <li><b>Angles amplify position noise.</b> If only the knee point has noise of σ (in image-width units) and the thigh and shank are each about length L, the knee angle noise is roughly <span class="math">σ<sub>θ</sub> ≈ σ·√(1/L<sub>1</sub>² + 1/L<sub>2</sub>²)</span> radians. With σ = 0.0045 and L = 0.22 (a person filling most of the frame) that is about 1.7°. Hip and ankle noise add more.</li>
+  <li><b>Differentiation amplifies again.</b> Angular velocity is (θ<sub>t</sub> − θ<sub>t−1</sub>)·fps. Independent 1.7° noise on two frames gives about 1.7·√2·30 ≈ 70°/s of fake velocity at 30 fps, which is larger than the real speed of a slow squat.</li>
+  <li><b>Thresholds turn noise into wrong events.</b> A rep counter that fires whenever the knee angle crosses 130° will fire twice if jitter crosses that line twice near the bottom. In <a href="09-experiment.html">Section 9</a> a naive counter reports 12 reps on a 10-rep sequence for exactly this reason.</li>
+</ol>
+<p>Real systems take this seriously. Ullah et al.'s physical-therapy scoring system uses a fixed bounding box over the whole clip instead of a per-frame box specifically to reduce jitter before computing joint angles, angular velocity and repetition peaks <a class="cite" href="bibliography.html#r4">[4]</a>. The review by Tharatipyakul et al. lists the handling of erroneous feedback as an open research question for the field <a class="cite" href="bibliography.html#r1">[1]</a>. Unstable landmarks are a main source of that erroneous feedback.</p>
+
+<div class="callout warn"><span class="title">Key idea</span>The detector's job is to find the joint in one image. The temporal filter's job is to decide how much to believe that answer given everything seen so far. Keeping the two jobs separate lets you swap detectors without rewriting the analytics.</div>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Most pose estimators predict each frame without enforcing agreement with neighbors.</li>
+<li>Jitter comes from several distinct error types: white noise, drift, spikes, gaps, and swaps.</li>
+<li>Angles, velocities and thresholds all amplify keypoint noise, which leads to false reps and false form alerts.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

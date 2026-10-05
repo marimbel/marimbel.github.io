@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10 · Limitations &amp; Future Work</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="10-limitations">
+<main><div class="content">
+<div class="kicker">Section 10</div>
+<h1>Limitations and Future Work</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Our final section is about what temporal filtering cannot do, and where research is going.
+Filters smooth what the detector gives them. If a joint is hidden for a whole second, or the detector confidently swaps the left and right knee, a filter alone cannot recover the truth.
+A single camera also has a depth problem. A two-dimensional knee angle is the projection of a three-dimensional angle, and it changes with camera position even when the movement does not.
+Research is moving from hand-designed filters to learned temporal models. SmoothNet is a small network that learns to remove jitter from any pose estimator's output. And a CVPR 2026 paper, HTD-Refine, predicts velocities and accelerations directly from video to avoid both jitter and over-smoothing.
+I will close with the labs doing this work and what I would try next.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#occ">Severe occlusion</a></li><li><a href="#wrong">Incorrect pose detections</a></li><li><a href="#depth">2D depth ambiguity</a></li><li><a href="#learned">Learned temporal models</a></li><li><a href="#multi">Multi-frame pose estimation</a></li><li><a href="#labs">Who is working on this</a></li><li><a href="#concl">Conclusions</a></li></ol></div>
+
+<h2 id="occ">10.1 Severe occlusion</h2>
+<p>Every method in this tutorial assumes gaps are short. In real exercise video, long occlusions are common: in a side-view push-up, the far arm can be hidden for the whole set; gym equipment, a second person or the frame edge can block a joint for seconds. Constant-velocity prediction drifts within a few hundred milliseconds (Figure 6.1), and interpolation over a long gap draws a straight line through a curved movement. Options that go beyond per-joint filtering:</p>
+<ul>
+<li><b>Symmetry priors:</b> for bilateral exercises, mirror the visible side, clearly flagged as estimated.</li>
+<li><b>Kinematic models:</b> fit a skeleton with fixed bone lengths and joint limits so visible joints constrain hidden ones.</li>
+<li><b>Exercise-specific priors:</b> a squat follows a known path, so a rep-phase model can predict through a gap at a turning point where constant velocity fails.</li>
+<li><b>Better capture:</b> a second camera angle often costs less than any algorithm.</li>
+</ul>
+
+<h2 id="wrong">10.2 Incorrect pose detections</h2>
+<p>Filters assume errors are random and centered on the truth. Some detector errors are neither:</p>
+<ul>
+<li><b>Confident left/right swaps</b> pass confidence gates; Kalman gating helps only if the swap is short.</li>
+<li><b>Wrong person</b>: in a gym or class video, the detector may jump to someone else. This needs identity tracking (associating detections across frames) before any keypoint filter.</li>
+<li><b>Systematic bias</b>: loose clothing, unusual body types or rare poses can shift a joint consistently. A filter will make a biased keypoint very smooth, and still wrong.</li>
+</ul>
+<p>Eghbalian and Desai's evaluation across seven 3D pose estimators shows how upstream estimation quality propagates into downstream biomechanical predictions <a class="cite" href="bibliography.html#r10">[10]</a>. Temporal filtering reduces noise in that chain; it does not remove bias.</p>
+
+<h2 id="depth">10.3 2D depth ambiguity</h2>
+<p>A 2D knee angle is the projection of the true 3D angle onto the image plane. It is close to correct only when the leg moves in a plane roughly parallel to the camera (a clean side view). Turn the camera 30–45° and the same squat produces a different 2D angle curve; filming from the front, knee flexion is almost invisible while knee valgus becomes visible. MediaPipe's <code>z</code> and world landmarks give a 3D estimate from one camera <a class="cite" href="bibliography.html#r3">[3]</a>, but monocular depth is much noisier than x and y, so it needs heavier filtering, which brings back the lag problem. Practical guidance: specify the camera view per exercise and check it (e.g. compare left and right hip x-positions to detect a rotated view).</p>
+
+<h2 id="learned">10.4 Learned temporal models</h2>
+<p>The filters in this tutorial are hand-designed with one or two parameters each. Recent work learns the temporal model from data instead:</p>
+<ul>
+<li><b>SmoothNet</b> (Zeng et al., ECCV 2022) is a temporal-only network that is attached after any existing pose estimator. It looks at each joint's trajectory over a long window, ignores relationships between joints, and learns to remove jitter, especially in frames with occlusion or rare poses. Because it only sees trajectories, it transfers across backbones and datasets <a class="cite" href="bibliography.html#r11">[11]</a>. Conceptually it is a learned replacement for the Gaussian or Savitzky–Golay filter, and like them it needs a window of frames.</li>
+<li><b>HTD-Refine</b> (Wei et al., CVPR 2026) attacks a problem this tutorial ran into directly: recovered motion is often either jittery or <i>over-smoothed</i>. It trains a temporal transformer (PVA-Net) to predict per-joint 2D positions, 3D velocities and 3D accelerations from the video, then uses those predicted dynamics as soft constraints in a global optimization of the world-space motion <a class="cite" href="bibliography.html#r12">[12]</a>. In our terms, instead of estimating velocity by differentiating noisy positions (Section 2.3), it predicts velocity and acceleration from the images, and that gives the smoother something better to aim for.</li>
+</ul>
+<p>The tradeoff is the usual one for learned methods: they need training data and GPUs, they may fail on movements absent from training (many exercise movements are rare in general pose datasets), and they are harder to reason about than a filter with two parameters. For a phone app, a learned model that runs on short windows, or a One Euro/Kalman filter whose parameters are predicted by a small network, are promising middle grounds.</p>
+
+<h2 id="multi">10.5 Multi-frame pose estimation</h2>
+<p>A different approach is to stop treating each frame independently in the first place. Video pose models take a stack of frames (or features from several frames) as input and output poses that are consistent by construction. The BlazePose tracker already uses the previous frame's pose to place the next crop <a class="cite" href="bibliography.html#r2">[2]</a>, and BioModule processes whole 3D pose sequences with a transformer to predict biomechanical attributes <a class="cite" href="bibliography.html#r10">[10]</a>. Multi-frame models usually cost more compute and add latency (they need several frames before output), so for real-time mobile use the lightweight detector + filter pipeline in this tutorial is still the common choice.</p>
+
+<h2 id="labs">10.6 Who is working on this</h2>
+<div class="table-wrap"><table>
+<tr><th>Group</th><th>Relevant work</th></tr>
+<tr><td>Zhejiang University, State Key Lab of CAD&amp;CG (Xiaowei Zhou's group)</td><td>Monocular human motion recovery; HTD-Refine <a class="cite" href="bibliography.html#r12">[12]</a></td></tr>
+<tr><td>Univ. of Texas at San Antonio (Kevin Desai)</td><td>Pose-to-biomechanics, linking pose estimation to clinical and kinetic measures <a class="cite" href="bibliography.html#r10">[10]</a></td></tr>
+<tr><td>Univ. of Lille / Inria (Géry Casiez)</td><td>Interaction techniques and input filtering; the 1€ filter <a class="cite" href="bibliography.html#r6">[6]</a></td></tr>
+<tr><td>Google (MediaPipe team)</td><td>On-device pose tracking used by many fitness apps <a class="cite" href="bibliography.html#r2">[2]</a>, <a class="cite" href="bibliography.html#r3">[3]</a></td></tr>
+<tr><td>National Electronics and Computer Technology Center, Thailand (Pongnumkul et al.)</td><td>Reviews of pose-based movement feedback systems <a class="cite" href="bibliography.html#r1">[1]</a></td></tr>
+</table></div>
+
+<h2 id="concl">10.7 Conclusions</h2>
+<p>Frame-by-frame pose estimators produce keypoints that are good enough to draw but not stable enough to measure. A temporal filtering layer between the detector and the analytics is cheap and makes a large difference: in our experiment it cut jitter by 2–25× and fixed double-counted reps. The choice of filter is a choice about the smoothness–latency tradeoff. The One Euro filter is the best simple default for live display; a confidence-aware Kalman filter with gating is better when detections drop out or contain outliers; and when feedback can wait until a rep or set ends, offline smoothers are clearly more accurate. Whatever the filter, gate on confidence, mark lost joints honestly, and tune thresholds and filter together.</p>
+<p>For my Project 3 app, I plan to build on this by combining a Kalman stage for gap handling, a One Euro stage for display, and per-rep offline smoothing for scoring, then testing it on real squat and push-up recordings.</p>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Filters cannot fix long occlusions, confident wrong detections, bias, or 2D projection error.</li>
+<li>Learned temporal models (SmoothNet, HTD-Refine) learn smoothing and dynamics from data.</li>
+<li>For real-time mobile exercise apps, detector + well-tuned filter remains the practical choice.</li>
+</ul></div>
+<div class="callout"><span class="title">Next</span>Try the <a href="lab.html">Filter Lab</a>, then check your understanding with the <a href="quiz.html">quiz</a>.</div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

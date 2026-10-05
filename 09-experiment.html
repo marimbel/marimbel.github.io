@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9 · Experimental Comparison</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="09-experiment">
+<main><div class="content">
+<div class="kicker">Section 9</div>
+<h1>Experimental Comparison</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section nine puts all of the filters side by side on the same squat sequence.
+To measure error we need to know the true knee angle, and a real video does not come with that. So I built a twenty second side-view squat with known ground truth: four slow squats, four seconds standing still, and six fast squats. Then I added the kinds of errors real detectors make: frame jitter, slow wobble, spikes, a motion blur burst, and a short dropout.
+I ran seven filters on it and measured jitter while standing, overall angle error, lag on the fast reps, worst-case error, rep counts, and run time.
+The short version: no causal filter wins every column. The One Euro filter is the best balance of smoothness and lag, the Kalman filter has the lowest error and handles the dropout, and the offline filters show how much better you can do if you can wait.
+The same scripts can be run on your own MediaPipe video, and the interactive lab lets you change the parameters yourself.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#setup">Running a pose estimator and extracting trajectories</a></li><li><a href="#filters">Applying multiple filters</a></li><li><a href="#results">Comparing raw vs. filtered signals</a></li><li><a href="#discussion">Discussion: which filter when?</a></li><li><a href="#own">Run it on your own video</a></li></ol></div>
+
+<h2 id="setup">9.1 Running a pose estimator and extracting trajectories</h2>
+<p>The plan was to run MediaPipe on squat, push-up and lunge video and compare filters on the extracted landmarks. There is a measurement problem with that plan: <b>a real video has no ground-truth joint positions</b>, so we can measure jitter and lag relative to other filters, but not true error. Biomechanics datasets solve this with motion capture; for a tutorial-sized study I used two complementary sources:</p>
+<ol>
+<li><b>A simulated squat with known truth</b> (all results on this page). A side-view hip–knee–ankle chain is animated through a realistic knee-angle profile, then corrupted with the four noise types from Section 2.4.</li>
+<li><b>A MediaPipe extraction script for real video</b> (<code>experiment/extract_landmarks.py</code>), which produces the same CSV format so every filter and metric below can be re-run on a real clip (Section 9.5). Push-ups and lunges use the same code with a different joint triplet (shoulder–elbow–wrist; hip–knee–ankle of the front leg).</li>
+</ol>
+<div class="table-wrap"><table>
+<tr><th>Simulation component</th><th>Setting</th><th>Mimics</th></tr>
+<tr><td>Timeline (30 fps, 600 frames)</td><td>0–10 s: 4 slow squats (2.5 s each), 10–14 s: standing, 14–20 s: 6 fast squats (1 s each)</td><td>Slow, still, and explosive phases</td></tr>
+<tr><td>Knee angle range</td><td>175° → 85° (slow), 175° → 95° (fast)</td><td>Parallel-depth squat</td></tr>
+<tr><td>White jitter</td><td>σ = 0.0045 (hip, knee), 0.0035 (ankle), image-normalized</td><td>Per-frame regression noise</td></tr>
+<tr><td>Slow wobble</td><td>AR(1), coefficient 0.9</td><td>Crop shifts, lighting drift</td></tr>
+<tr><td>Spikes</td><td>1.2% of frames, σ = 0.03, visibility −0.25</td><td>One-frame failures</td></tr>
+<tr><td>Motion-blur burst</td><td>Knee, 4.6–5.0 s, σ = 0.035, visibility 0.15–0.35</td><td>Blur at bottom of a rep</td></tr>
+<tr><td>Dropout</td><td>Knee missing, 16.20–16.45 s (≈ 7 frames)</td><td>Detector loses the joint</td></tr>
+</table></div>
+<p>The simulation code is <code>simulate()</code> in <code>experiment/run_experiment.py</code>, with a fixed random seed so results are reproducible.</p>
+
+<h2 id="filters">9.2 Applying multiple filters</h2>
+<p>Each filter runs on the six coordinate series (x and y of hip, knee and ankle), and the knee angle is computed from the filtered points. For the low-pass filters, samples with visibility &lt; 0.5 or missing values are replaced by the last good sample ("hold") before filtering. The Kalman filter instead skips the update and predicts. The offline filters first linearly interpolate gaps of up to 15 frames.</p>
+<p><b>Metrics</b> (on the knee angle):</p>
+<ul>
+<li><b>Jitter at rest</b>: RMS of the second difference during 10.5–13.5 s, in degrees per frame². Truth is constant here, so ideal is 0.</li>
+<li><b>RMSE</b>: root-mean-square angle error over the whole clip.</li>
+<li><b>Lag</b>: the time shift (0–10 frames) that best aligns the filtered angle with the truth during the fast phase.</li>
+<li><b>Worst error (fast)</b>: largest absolute error in the fast phase; this includes the dropout.</li>
+<li><b>Reps</b>: single-threshold counter / hysteresis counter (Section 8.2). True count: 10.</li>
+<li><b>µs/update</b>: mean Python time per scalar filter update.</li>
+</ul>
+
+<h2 id="results">9.3 Comparing raw vs. filtered signals</h2>
+<div class="table-wrap"><table>
+<tr><th>Filter</th><th>Parameters</th><th class="num">Jitter at rest</th><th class="num">RMSE (°)</th><th class="num">Lag (ms)</th><th class="num">Worst err. fast (°)</th><th class="num">Reps naive / hyst.</th><th class="num">µs / update</th></tr>
+<tr><td>Raw</td><td>—</td><td class="num">5.05</td><td class="num">4.09</td><td class="num">0</td><td class="num">13.7</td><td class="num">12 / 10</td><td class="num">—</td></tr>
+<tr><td>Moving avg</td><td>N = 7</td><td class="num">0.79</td><td class="num">11.95</td><td class="num">100</td><td class="num">36.6</td><td class="num">10 / 9</td><td class="num">1.1</td></tr>
+<tr><td>EMA</td><td>α = 0.3</td><td class="num">1.24</td><td class="num">9.17</td><td class="num">67</td><td class="num">35.7</td><td class="num">10 / 10</td><td class="num">0.4</td></tr>
+<tr><td>One Euro</td><td>f<sub>c,min</sub> = 1.0 Hz, β = 15, d<sub>cutoff</sub> = 1 Hz</td><td class="num">1.01</td><td class="num">5.78</td><td class="num">33</td><td class="num">31.1</td><td class="num">10 / 10</td><td class="num">1.6</td></tr>
+<tr><td>Kalman</td><td>CV, q = 10, r = 10⁻⁴, gate 4σ, R/c²</td><td class="num">2.27</td><td class="num">3.00</td><td class="num">0</td><td class="num">9.0</td><td class="num">10 / 10</td><td class="num">18.6</td></tr>
+<tr><td>Gaussian (offline)</td><td>σ = 2 frames</td><td class="num">0.20</td><td class="num">2.57</td><td class="num">0</td><td class="num">7.7</td><td class="num">10 / 10</td><td class="num">—</td></tr>
+<tr><td>Savitzky-Golay (offline)</td><td>window 11, cubic</td><td class="num">0.78</td><td class="num">2.33</td><td class="num">0</td><td class="num">6.6</td><td class="num">10 / 10</td><td class="num">—</td></tr>
+</table></div>
+<p class="meta">Lower is better for every numeric column except reps (target 10). Lag resolution is one frame (33 ms). Timing is single-threaded CPython and varies about ±20% between runs.</p>
+
+<figure>
+<img class="figimg" src="img/exp_metrics.png" alt="Three horizontal bar charts. Jitter at rest: raw 5.0, moving average 0.8, EMA 1.2, One Euro 1.0, Kalman 2.3, Gaussian 0.2, Savitzky-Golay 0.8. Angle RMSE: raw 4.1, moving average 11.9, EMA 9.2, One Euro 5.8, Kalman 3.0, Gaussian 2.6, Savitzky-Golay 2.3. Lag: moving average 100 ms, EMA 67, One Euro 33, all others 0." width="1650" height="540" loading="lazy">
+<figcaption><b>Figure 9.1.</b> The three main metrics side by side. No causal filter is best in all three. Figure created for this tutorial.</figcaption>
+</figure>
+
+<p>Plots of the individual phases are in earlier sections: the whole clip (Figure 2.2), standing still (Figure 7.2), fast reps (Figure 7.1), and the blur and dropout (Figure 6.1).</p>
+
+<h3>What the numbers say</h3>
+<ul>
+<li><b>Every filter removed most of the jitter</b> (5.05 → 0.2–2.3), and every filter fixed the naive rep counter's double counts.</li>
+<li><b>Several low-pass filters have <i>higher</i> RMSE than the raw signal.</b> This surprised me at first. Raw keypoints are noisy but unbiased; a lagging filter is smooth but systematically wrong during fast motion, and that error is large (up to tens of degrees at 1 rep/s) while it lasts. The "hold" strategy during the 7-frame dropout adds to this (the worst-error column). Smoothness is not the same as accuracy.</li>
+<li><b>One Euro</b> gave the best smoothness/lag balance among causal filters: near-EMA jitter with half the lag.</li>
+<li><b>Kalman</b> had the lowest causal RMSE and handled the dropout far better (worst error 9° vs. 31–37° for hold-based filters), but let through about twice the jitter of One Euro when standing still, because q was tuned for responsiveness.</li>
+<li><b>Moving average</b> was smooth but slowest, and its flattened rep bottoms caused a missed rep with the hysteresis counter.</li>
+<li><b>Offline filters</b> were best overall (RMSE 2.3–2.6°), which shows how much accuracy live feedback gives up.</li>
+</ul>
+
+<h2 id="discussion">9.4 Discussion: which filter when?</h2>
+<div class="table-wrap"><table>
+<tr><th>Situation</th><th>Recommendation</th></tr>
+<tr><td>Live skeleton overlay, mostly slow movement</td><td>One Euro on each coordinate</td></tr>
+<tr><td>Live analytics with occlusions or frequent detector failures</td><td>Kalman with confidence-scaled R and gating; optionally One Euro after it</td></tr>
+<tr><td>Rep counting</td><td>Any of the above + hysteresis; avoid long moving averages</td></tr>
+<tr><td>Post-set or clinical scoring (Section 8.4)</td><td>Interpolate gaps, then Savitzky–Golay or Gaussian (zero lag)</td></tr>
+<tr><td>Very limited code/memory</td><td>EMA, with α computed from a cutoff and real Δt</td></tr>
+</table></div>
+<p>Limits of this experiment: the noise is simulated and independent per joint, while real detector errors are often correlated across joints and with motion; only one exercise and one camera view were tested; and parameters were tuned on the same clip they were evaluated on, which flatters every filter a little. Running the same scripts on several real, labeled clips would make the comparison stronger.</p>
+
+<h2 id="own">9.5 Run it on your own video</h2>
+<pre><code>pip install mediapipe opencv-python numpy scipy matplotlib
+<span class="c"># download pose_landmarker_lite.task (link in extract_landmarks.py), then:</span>
+python extract_landmarks.py my_squats.mp4 --side left              <span class="c"># MediaPipe VIDEO mode</span>
+python extract_landmarks.py my_squats.mp4 --side left --image-mode <span class="c"># every frame independent</span>
+python run_experiment.py --csv landmarks.csv                       <span class="c"># plots raw vs. filtered</span>
+python run_experiment.py --simulate                                <span class="c"># reproduces this page</span></code></pre>
+<p>Film from the side with the whole body in view. Note that MediaPipe's VIDEO running mode already tracks between frames, so its output is somewhat smoother than truly independent per-frame detection; <code>--image-mode</code> shows the raw per-frame jitter. Without ground truth the script reports jitter and rep counts only.</p>
+<div class="callout"><span class="title">Try it interactively</span>The <a href="lab.html">Filter Lab</a> runs the same simulated data and the same four causal filters in your browser, so you can move the sliders and watch the metrics change. The <a href="webcam.html">Live Webcam Lab</a> runs MediaPipe on your own camera.</div>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Simulated data with known truth lets us measure error, not just smoothness.</li>
+<li>One Euro: best jitter/lag balance. Kalman: best causal accuracy and gap handling. Offline smoothers: best overall.</li>
+<li>Smoother is not always more accurate; lag creates its own error.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4 · The One Euro Filter</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="04-one-euro">
+<main><div class="content">
+<div class="kicker">Section 4</div>
+<h1>The One Euro (1€) Filter</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section four is about the One Euro filter, published by Casiez, Roussel and Vogel at CHI in 2012.
+The idea is simple. It is an exponential moving average whose cutoff frequency is not fixed. When the keypoint moves slowly, the cutoff is low, so jitter is removed. When the keypoint moves fast, the cutoff rises, so the filter follows the motion with little lag.
+To do that, the filter estimates the speed of the signal, smooths that speed with its own small low-pass filter, and then sets the cutoff to a minimum value plus beta times the speed.
+There are only two parameters you really tune: min cutoff, which controls jitter at rest, and beta, which controls lag during fast movement. We will walk through the tuning procedure the authors recommend, and one trap: beta depends on the units of your coordinates.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#adapt">Adaptive cutoff frequency</a></li><li><a href="#speed">Relationship between movement speed and smoothing</a></li><li><a href="#why">Why it is useful for real-time pose tracking</a></li><li><a href="#tune">Parameter selection</a></li></ol></div>
+
+<h2 id="adapt">4.1 Adaptive cutoff frequency</h2>
+<p>The 1€ filter was designed for noisy input in interactive systems such as mouse, touch and tracked-hand cursors, where users notice both jitter and lag <a class="cite" href="bibliography.html#r6">[6]</a>. Its authors point out that people tolerate jitter when moving fast and lag when moving slowly, but not the opposite. A pose skeleton drawn over a live camera image has the same property.</p>
+<p>The filter is an EMA (Section 3.2) in which α is recomputed every frame from a cutoff frequency f<sub>c</sub> that depends on speed:</p>
+<span class="eq">
+f<sub>c</sub> = f<sub>c,min</sub> + β · |dx̂<sub>k</sub>| &nbsp;&nbsp;&nbsp;&nbsp;
+α(f<sub>c</sub>) = 1 / (1 + τ/T<sub>e</sub>), &nbsp; τ = 1/(2π f<sub>c</sub>) &nbsp;&nbsp;&nbsp;&nbsp;
+x̂<sub>k</sub> = α·x<sub>k</sub> + (1−α)·x̂<sub>k−1</sub>
+</span>
+<p>The speed dx̂ is itself the output of a second, fixed EMA (cutoff d<sub>cutoff</sub>, usually 1 Hz) applied to the raw derivative (x<sub>k</sub> − x̂<sub>k−1</sub>)/T<sub>e</sub>. Without that inner filter the noisy derivative (Section 2.3) would make the cutoff jump around every frame.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" role="img" aria-label="One Euro block diagram: the input x goes to a derivative block, then a fixed low-pass on the derivative, then an absolute value and the cutoff formula, which sets the alpha of the main adaptive low-pass that outputs x-hat. The output is fed back to the derivative." style="width:100%;height:auto">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="12.5" fill="var(--ink)">
+  <text x="22" y="150" font-weight="700">x<tspan baseline-shift="sub" font-size="10">k</tspan></text>
+  <rect x="80" y="30" width="120" height="50" rx="8" fill="var(--surface-2)" stroke="var(--line)"/><text x="140" y="52" text-anchor="middle">derivative</text><text x="140" y="68" text-anchor="middle" font-size="11" fill="var(--ink-2)">(x − x̂ₖ₋₁)/Tₑ</text>
+  <rect x="240" y="30" width="130" height="50" rx="8" fill="var(--surface-2)" stroke="var(--line)"/><text x="305" y="52" text-anchor="middle">low-pass</text><text x="305" y="68" text-anchor="middle" font-size="11" fill="var(--ink-2)">fixed d_cutoff</text>
+  <rect x="410" y="30" width="150" height="50" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="485" y="52" text-anchor="middle" font-weight="600">cutoff</text><text x="485" y="68" text-anchor="middle" font-size="11" fill="var(--ink-2)">f_min + β·|dx̂|</text>
+  <rect x="410" y="120" width="150" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="485" y="144" text-anchor="middle" font-weight="700">adaptive low-pass</text><text x="485" y="162" text-anchor="middle" font-size="11" fill="var(--ink-2)">α from f_c and Tₑ</text>
+  <text x="680" y="152" font-weight="700">x̂<tspan baseline-shift="sub" font-size="10">k</tspan></text>
+  <g stroke="var(--muted)" stroke-width="1.6" fill="none" marker-end="url(#a4)">
+    <path d="M40 146 H60 V55 H78"/><path d="M60 148 H408"/>
+    <line x1="200" y1="55" x2="238" y2="55"/><line x1="370" y1="55" x2="408" y2="55"/>
+    <line x1="485" y1="80" x2="485" y2="118"/>
+    <line x1="560" y1="148" x2="670" y2="148"/>
+    <path d="M620 148 V195 H140 V82" stroke-dasharray="4 3"/>
+  </g>
+  <text x="380" y="205" text-anchor="middle" font-size="11" fill="var(--ink-2)">previous output fed back</text>
+  <text x="320" y="104" font-size="11" fill="var(--ink-2)">speed dx̂</text>
+  </g>
+</svg>
+<figcaption><b>Figure 4.1.</b> Structure of the One Euro filter, drawn from the description in Casiez et al. <a class="cite" href="bibliography.html#r6">[6]</a>. Diagram created for this tutorial.</figcaption>
+</figure>
+
+<h3>Implementation</h3>
+<pre><code><span class="k">def</span> smoothing_factor(te, cutoff):
+    tau = 1.0 / (2 * math.pi * cutoff)
+    <span class="k">return</span> 1.0 / (1.0 + tau / te)
+
+<span class="k">class</span> OneEuro:
+    <span class="k">def</span> __init__(self, min_cutoff=1.0, beta=0.0, d_cutoff=1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.x_prev, self.dx_prev, self.t_prev = None, 0.0, None
+
+    <span class="k">def</span> filter(self, x, t):
+        <span class="k">if</span> self.x_prev <span class="k">is None</span>:                     <span class="c"># first sample: pass through</span>
+            self.x_prev, self.t_prev = x, t
+            <span class="k">return</span> x
+        te = t - self.t_prev                         <span class="c"># real time step (handles dropped frames)</span>
+        dx = (x - self.x_prev) / te                  <span class="c"># 1. raw speed</span>
+        a_d = smoothing_factor(te, self.d_cutoff)
+        dx_hat = a_d * dx + (1 - a_d) * self.dx_prev <span class="c"># 2. smoothed speed</span>
+        cutoff = self.min_cutoff + self.beta * abs(dx_hat)   <span class="c"># 3. speed -> cutoff</span>
+        a = smoothing_factor(te, cutoff)
+        x_hat = a * x + (1 - a) * self.x_prev        <span class="c"># 4. adaptive EMA</span>
+        self.x_prev, self.dx_prev, self.t_prev = x_hat, dx_hat, t
+        <span class="k">return</span> x_hat</code></pre>
+<p>To filter a skeleton, create one <code>OneEuro</code> per landmark per coordinate (66 for MediaPipe in 2D). The same code in JavaScript runs the <a href="lab.html">Filter Lab</a>.</p>
+
+<h2 id="speed">4.2 Relationship between movement speed and smoothing</h2>
+<figure>
+<img class="figimg" src="img/oneeuro_cutoff.png" alt="Line chart of cutoff frequency against keypoint speed for four values of beta. Beta zero is a flat line at 1 Hz; larger betas give steeper lines, reaching about 19 Hz at a speed of 0.6 for beta 30." width="975" height="510" loading="lazy">
+<figcaption><b>Figure 4.2.</b> Cutoff frequency as a function of smoothed speed for min_cutoff = 1 Hz. β = 0 is a plain EMA. Speeds are in image widths per second; a knee during a fast squat reaches roughly 0.2–0.4. Figure created for this tutorial.</figcaption>
+</figure>
+<p>When the joint is still, |dx̂| ≈ 0 and f<sub>c</sub> = f<sub>c,min</sub>. At 30 fps with f<sub>c,min</sub> = 1 Hz, α ≈ 0.17, which is heavy smoothing. When the knee moves at 0.3 image widths per second with β = 15, f<sub>c</sub> rises to 5.5 Hz and α ≈ 0.53: the filter now follows the input closely. The filter is effectively choosing between "averaging" and "trusting the latest frame" based on how fast things are changing. In Figure 3.1 this is why the One Euro step response catches up faster than the EMA: the step itself is a fast movement, so the filter opens up.</p>
+
+<h2 id="why">4.3 Why it is useful for interactive and real-time pose tracking</h2>
+<ul>
+<li><b>Causal and O(1).</b> A few multiplications and one division per sample; it measured about 1.5 µs per update even in plain Python in our experiment, so 66 filters cost well under 1 ms per frame.</li>
+<li><b>Handles variable frame rate</b> through T<sub>e</sub>, which matters on phones where inference time varies.</li>
+<li><b>Two intuitive knobs</b> that map directly to the two complaints users make: "it shakes" (lower f<sub>c,min</sub>) and "it lags" (raise β).</li>
+<li><b>No motion model needed.</b> Unlike a Kalman filter, it makes no assumption about how a body moves, so it does not overshoot when a movement stops suddenly.</li>
+</ul>
+<p>Limitations: it is still a low-pass filter, so spikes pass through partially (a spike looks like a fast movement and actually <i>raises</i> the cutoff). It has no notion of confidence and no way to predict through a gap; those must be added around it (Section 6).</p>
+
+<h2 id="tune">4.4 Parameter selection</h2>
+<p>The authors recommend a two-step procedure <a class="cite" href="bibliography.html#r6">[6]</a>:</p>
+<ol>
+<li>Set β = 0 and d<sub>cutoff</sub> = 1 Hz. Hold still or move <b>slowly</b>, and lower f<sub>c,min</sub> until jitter is acceptable while lag is still tolerable.</li>
+<li>Move <b>fast</b> and increase β until lag is acceptable. Start small and change by factors of 10.</li>
+</ol>
+<p>Rule of thumb from the same source: if high-speed lag is the problem, increase β; if low-speed jitter is the problem, decrease f<sub>c,min</sub>.</p>
+<div class="callout warn"><span class="title">Unit trap</span>β multiplies a speed, so its value depends on your coordinate units. A β that works for pixel coordinates (speeds in hundreds of px/s) is hundreds of times too large for MediaPipe's normalized coordinates (speeds below 1 per second). In our experiment with normalized coordinates, f<sub>c,min</sub> = 1.0 Hz and β = 15 worked well, while for raw pixel or mouse coordinates the authors suggest starting β around 0.001 or 0.0001 <a class="cite" href="bibliography.html#r6">[6]</a>. Normalize first (Section 2.1), then tune.</div>
+<p>For exercise videos, slow controlled movements (a tempo squat, a plank hold) let you use a low f<sub>c,min</sub> such as 0.5–1 Hz. Explosive movements (jump squats, kettlebell swings) need a larger β. Try it yourself in the <a href="lab.html">Filter Lab</a>.</p>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>1€ = EMA whose cutoff rises linearly with smoothed speed.</li>
+<li>f<sub>c,min</sub> controls jitter at rest; β controls lag during fast motion.</li>
+<li>Cheap, causal, frame-rate aware; does not handle spikes, confidence, or gaps by itself.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

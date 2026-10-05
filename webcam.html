@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Webcam Lab</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .live { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; }
+  .vidbox { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .vidbox video, .vidbox canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .vidbox video { transform: scaleX(-1); } .vidbox canvas.mirror { transform: scaleX(-1); }
+  .vidbox.file video, .vidbox.file canvas { transform: none; }
+  #status { font-size: .88rem; color: var(--ink-2); }
+  @media (max-width: 900px) { .live { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body data-page="webcam">
+<main><div class="content" style="max-width:1000px">
+<div class="kicker">Interactive</div>
+<h1>Live Webcam Lab</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+This is the live webcam lab. It runs Google's MediaPipe pose landmarker directly in your browser, on your own camera or on a video file you choose. Nothing is uploaded; all processing happens on your computer.
+Stand sideways to the camera so your whole body is visible, choose which leg is closer to the camera, and press start.
+The gray skeleton is the raw output of the detector, and the blue skeleton is filtered. The chart on the right shows your knee angle over the last six seconds, raw and filtered, and the counter below counts squats using the filtered angle.
+Try standing still and watch how much the raw knee angle shakes, then do a few fast squats and change the filter settings to see the tradeoff between smoothness and lag on real data.
+</script>
+
+<p>This page runs MediaPipe Pose Landmarker <a class="cite" href="bibliography.html#r3">[3]</a> in your browser and applies the filters from this tutorial to your own movement. <b>Video never leaves your device.</b> It needs a modern browser and an internet connection the first time (to load the model, about 5 MB).</p>
+
+<div class="panel" style="margin-bottom:14px">
+  <div class="controls">
+    <div><label for="src">Input</label><select id="src"><option value="cam">Webcam</option><option value="file">Video file…</option></select></div>
+    <div><label for="side">Leg closest to camera</label><select id="side"><option value="left">Left</option><option value="right">Right</option></select></div>
+    <div><label for="filt">Filter</label><select id="filt"><option value="oneeuro">One Euro</option><option value="kalman">Kalman</option><option value="ema">EMA</option></select></div>
+    <div data-f="oneeuro"><label>min_cutoff: <span class="val" id="v_mc">1.0</span> Hz</label><input type="range" id="p_mc" min="0.1" max="5" step="0.1" value="1.0"></div>
+    <div data-f="oneeuro"><label>β: <span class="val" id="v_beta">15</span></label><input type="range" id="p_beta" min="0" max="60" step="1" value="15"></div>
+    <div data-f="kalman"><label>q: <span class="val" id="v_q">10</span></label><input type="range" id="p_q" min="0" max="3" step="0.05" value="1"></div>
+    <div data-f="ema"><label>α: <span class="val" id="v_alpha">0.30</span></label><input type="range" id="p_alpha" min="0.02" max="1" step="0.01" value="0.3"></div>
+  </div>
+  <input type="file" id="file" accept="video/*" hidden>
+  <div class="btnrow" style="margin-top:12px">
+    <button class="btn" id="start">▶ Start</button>
+    <button class="btn secondary" id="stop" disabled>■ Stop</button>
+    <button class="btn secondary" id="resetReps">Reset reps</button>
+    <button class="btn secondary" id="csv" disabled>⬇ Download raw landmarks (CSV)</button>
+    <span id="status">Idle.</span>
+  </div>
+</div>
+
+<div class="live">
+  <div class="vidbox" id="vidbox"><video id="video" playsinline muted></video><canvas id="overlay" class="mirror"></canvas></div>
+  <div class="lab">
+    <div class="panel">
+      <div class="chk" style="margin-bottom:6px"><label><span class="swatch" style="background:var(--s-raw)"></span>Raw knee angle</label><label><span class="swatch" style="background:var(--s-blue)"></span>Filtered</label></div>
+      <canvas class="chart" id="live" style="height:220px" aria-label="Knee angle over the last 6 seconds"></canvas>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">Knee angle</div><div class="v" id="sAngle">—</div><div class="s">filtered</div></div>
+      <div class="stat"><div class="k">Reps</div><div class="v" id="sReps">0</div><div class="s">hysteresis 115°/160°</div></div>
+      <div class="stat"><div class="k">Jitter</div><div class="v" id="sJit">—</div><div class="s" id="sJitRaw">raw —</div></div>
+      <div class="stat"><div class="k">Speed</div><div class="v" id="sFps">—</div><div class="s">frames / s</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="callout" style="margin-top:18px"><span class="title">Tips</span>Use a side view with your whole body in frame and good light. "Jitter" is the RMS second difference of the knee angle over the last second (°/frame²); stand still to compare raw vs. filtered. The CSV uses the same columns as <code>experiment/extract_landmarks.py</code>, so <code>python run_experiment.py --csv landmarks.csv</code> works on it. If the camera does not start, check that the page is served over https (GitHub Pages is) and that camera permission is allowed.</div>
+</div></main>
+
+<script src="js/filters.js"></script>
+<script src="js/site.js"></script>
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const F = window.PoseFilters, $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const IDX = { left: { hip: 23, knee: 25, ankle: 27, shoulder: 11 }, right: { hip: 24, knee: 26, ankle: 28, shoulder: 12 } };
+const JOINTS = ["shoulder", "hip", "knee", "ankle"];
+
+let landmarker = null, running = false, stream = null, filters = null, hist = [], rows = [], reps = 0, state = "up", lastT = 0, fpsEMA = 0, t0 = 0;
+
+function status(s) { $("status").textContent = s; }
+function makeFilter() {
+  const f = $("filt").value;
+  if (f === "oneeuro") return new F.OneEuro(+$("p_mc").value, +$("p_beta").value, 1.0);
+  if (f === "ema") return new F.EMA(+$("p_alpha").value);
+  return new F.Kalman1D(Math.pow(10, +$("p_q").value), 1e-4, 16);
+}
+function resetFilters() { filters = {}; JOINTS.forEach(j => filters[j] = { x: makeFilter(), y: makeFilter() }); }
+function syncUI() {
+  const f = $("filt").value;
+  document.querySelectorAll("[data-f]").forEach(el => el.style.display = el.dataset.f === f ? "" : "none");
+  $("v_mc").textContent = (+$("p_mc").value).toFixed(1); $("v_beta").textContent = $("p_beta").value;
+  const q = Math.pow(10, +$("p_q").value); $("v_q").textContent = q < 10 ? q.toFixed(2) : q.toFixed(0);
+  $("v_alpha").textContent = (+$("p_alpha").value).toFixed(2);
+  resetFilters();
+}
+document.querySelectorAll(".controls select, .controls input").forEach(el => el.addEventListener("input", syncUI));
+syncUI();
+
+async function init() {
+  if (landmarker) return;
+  status("Loading MediaPipe model…");
+  const fileset = await FilesetResolver.forVisionTasks(WASM);
+  const opts = { baseOptions: { modelAssetPath: MODEL, delegate: "GPU" }, runningMode: "VIDEO", numPoses: 1 };
+  try { landmarker = await PoseLandmarker.createFromOptions(fileset, opts); }
+  catch (e) { opts.baseOptions.delegate = "CPU"; landmarker = await PoseLandmarker.createFromOptions(fileset, opts); }
+}
+
+async function start() {
+  try {
+    await init();
+    const video = $("video");
+    if ($("src").value === "cam") {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      video.srcObject = stream; $("vidbox").classList.remove("file"); $("overlay").classList.add("mirror");
+    } else {
+      const f = $("file").files[0];
+      if (!f) { $("file").click(); return; }
+      video.srcObject = null; video.src = URL.createObjectURL(f); video.loop = false;
+      $("vidbox").classList.add("file"); $("overlay").classList.remove("mirror");
+    }
+    await video.play();
+    resetFilters(); hist = []; rows = []; reps = 0; state = "up"; t0 = performance.now(); lastT = 0;
+    running = true; $("start").disabled = true; $("stop").disabled = false; $("csv").disabled = true;
+    status("Running. Stand sideways, whole body in view.");
+    requestAnimationFrame(loop);
+  } catch (e) { status("Could not start: " + e.message); console.error(e); }
+}
+function stop() {
+  running = false; $("start").disabled = false; $("stop").disabled = true; $("csv").disabled = rows.length === 0;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $("video").pause(); status(`Stopped. ${rows.length} frames recorded.`);
+}
+$("start").onclick = start; $("stop").onclick = stop;
+$("src").addEventListener("change", () => { if ($("src").value === "file") $("file").click(); });
+$("file").addEventListener("change", () => status($("file").files[0] ? "File selected: press Start." : "No file selected."));
+$("resetReps").onclick = () => { reps = 0; $("sReps").textContent = 0; };
+$("video").addEventListener("ended", () => { if (running) stop(); });
+
+function loop() {
+  if (!running) return;
+  const video = $("video");
+  if (video.readyState >= 2) {
+    const now = performance.now(), t = (now - t0) / 1000;
+    if (t > lastT) {
+      const dt = t - lastT; lastT = t; fpsEMA = fpsEMA ? 0.9 * fpsEMA + 0.1 / dt : 1 / dt;
+      const res = landmarker.detectForVideo(video, now);
+      process(res, t);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+function process(res, t) {
+  const side = IDX[$("side").value], lm = res.landmarks && res.landmarks[0];
+  const raw = {}, filt = {};
+  JOINTS.forEach(j => {
+    const p = lm ? lm[side[j]] : null;
+    const vis = p ? (p.visibility ?? 1) : 0;
+    raw[j] = p ? [p.x, p.y, vis] : null;
+    const ok = p && vis >= 0.5, f = filters[j];
+    if ($("filt").value === "kalman") {
+      const x = f.x.filter(p ? p.x : null, t, vis), y = f.y.filter(p ? p.y : null, t, vis);
+      filt[j] = x === null ? null : [x, y];
+    } else if (ok) filt[j] = [f.x.filter(p.x, t), f.y.filter(p.y, t)];
+    else filt[j] = f.x.y !== undefined && f.x.y !== null ? [f.x.y, f.y.y] : (f.x.xPrev !== undefined && f.x.xPrev !== null ? [f.x.xPrev, f.y.xPrev] : null);
+  });
+  rows.push({ t, side: $("side").value, ...Object.fromEntries(["hip", "knee", "ankle"].flatMap(j => raw[j] ? [[j + "_x", raw[j][0]], [j + "_y", raw[j][1]], [j + "_vis", raw[j][2]]] : [[j + "_x", ""], [j + "_y", ""], [j + "_vis", ""]])) });
+  const ang = s => s.hip && s.knee && s.ankle ? F.jointAngle(s.hip, s.knee, s.ankle) : NaN;
+  const aRaw = ang(raw), aF = ang(filt);
+  hist.push({ t, raw: aRaw, f: aF }); while (hist.length && hist[0].t < t - 6) hist.shift();
+  if (!isNaN(aF)) {
+    if (state === "up" && aF < 115) state = "down";
+    else if (state === "down" && aF > 160) { state = "up"; reps++; }
+  }
+  $("sAngle").textContent = isNaN(aF) ? "—" : aF.toFixed(0) + "°";
+  $("sReps").textContent = reps; $("sFps").textContent = fpsEMA.toFixed(0);
+  const last = hist.filter(h => h.t > t - 1), jit = k => { let s = 0, n = 0; for (let i = 2; i < last.length; i++) { const d = last[i][k] - 2 * last[i - 1][k] + last[i - 2][k]; if (!isNaN(d)) { s += d * d; n++; } } return n ? Math.sqrt(s / n) : NaN; };
+  const jf = jit("f"), jr = jit("raw");
+  $("sJit").textContent = isNaN(jf) ? "—" : jf.toFixed(2); $("sJitRaw").textContent = "raw " + (isNaN(jr) ? "—" : jr.toFixed(2));
+  drawOverlay(raw, filt); drawChart(t);
+}
+
+function drawOverlay(raw, filt) {
+  const c = $("overlay"), v = $("video"); c.width = v.videoWidth || 640; c.height = v.videoHeight || 480;
+  const g = c.getContext("2d"); g.clearRect(0, 0, c.width, c.height);
+  const sk = (s, col, w) => {
+    g.strokeStyle = col; g.lineWidth = w; g.lineCap = "round"; g.beginPath();
+    [["shoulder", "hip"], ["hip", "knee"], ["knee", "ankle"]].forEach(([a, b]) => { if (s[a] && s[b]) { g.moveTo(s[a][0] * c.width, s[a][1] * c.height); g.lineTo(s[b][0] * c.width, s[b][1] * c.height); } });
+    g.stroke(); g.fillStyle = col;
+    Object.values(s).forEach(p => { if (p) { g.beginPath(); g.arc(p[0] * c.width, p[1] * c.height, w * 0.9, 0, 7); g.fill(); } });
+  };
+  sk(raw, "rgba(200,200,200,0.85)", 4); sk(filt, "#3987e5", 6);
+}
+
+function drawChart(tNow) {
+  const cv = $("live"), r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  cv.width = r.width * dpr; cv.height = r.height * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = r.width, h = r.height, L = 36, B = 18, lo = 40, hi = 190;
+  const X = t => L + (t - (tNow - 6)) / 6 * (w - L - 6), Y = v => 6 + (1 - (v - lo) / (hi - lo)) * (h - B - 6);
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.font = "11px sans-serif"; g.textAlign = "right";
+  [60, 90, 120, 150, 180].forEach(v => { g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(w - 6, Y(v)); g.stroke(); g.fillText(v + "°", L - 4, Y(v) + 4); });
+  g.textAlign = "center"; g.fillText("last 6 s", w / 2, h - 3);
+  [["raw", css("--s-raw"), 1.2], ["f", css("--s-blue"), 2.2]].forEach(([k, col, lw]) => {
+    g.strokeStyle = col; g.lineWidth = lw; g.beginPath(); let pen = false;
+    hist.forEach(p => { const v = p[k]; if (isNaN(v)) { pen = false; return; } if (!pen) { g.moveTo(X(p.t), Y(v)); pen = true; } else g.lineTo(X(p.t), Y(v)); });
+    g.stroke();
+  });
+}
+
+$("csv").onclick = () => {
+  const cols = ["t", "side", "hip_x", "hip_y", "hip_vis", "knee_x", "knee_y", "knee_vis", "ankle_x", "ankle_y", "ankle_vis"];
+  const txt = [cols.join(",")].concat(rows.map(r => cols.map(c => r[c]).join(","))).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([txt], { type: "text/csv" })); a.download = "landmarks.csv"; a.click();
+};
+</script>
+</body>
+</html>

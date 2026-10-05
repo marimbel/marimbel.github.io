@@ -1,9 +1,89 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <title>My Website</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stabilizing Pose Trajectories</title>
+<meta name="description" content="A graduate research tutorial on temporal filtering and keypoint trajectory stabilization for human pose estimation in exercise videos.">
+<link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <h1>Welcome to my GitHub Pages website!</h1>
-</body
+<body data-page="index">
+<main><div class="content">
+
+<section class="hero">
+  <div class="kicker">CS663 Computer Vision · Project 1 Research Tutorial</div>
+  <h1>Temporal Filtering and Keypoint Trajectory Stabilization for Human Pose Estimation in Exercise Videos</h1>
+  <p class="meta">By Marianna Belmares · Fall 2026</p>
+  <div id="voice"></div>
+  <p class="lede">Pose estimators like MediaPipe, YOLO-pose and OpenPose look at each video frame more or less on its own. The result is a skeleton that shakes, loses joints for a few frames, and sometimes swaps one joint for another. This tutorial is about the layer that sits between the detector and the app: the <b>temporal filter</b> that turns noisy per-frame keypoints into trajectories you can trust for joint angles, rep counting and form feedback.</p>
+
+  <figure class="hero-fig">
+    <img class="figimg" src="img/hero_knee_path.png" alt="Two panels showing a knee keypoint path over four squats: the raw path on the left is jagged with large outlier spikes; the filtered path on the right follows the dashed true path closely." width="1350" height="510">
+    <figcaption><b>Figure 0.</b> The same knee keypoint over four squats, before and after a One Euro filter. Dashed line: true path. Figure created for this tutorial from the simulated squat used in <a href="09-experiment.html">Section 9</a>.</figcaption>
+  </figure>
+</section>
+
+<script type="text/plain" id="narration">
+Welcome to my research tutorial on temporal filtering and keypoint trajectory stabilization for human pose estimation in exercise videos.
+Modern pose estimators look at each video frame almost independently, so the skeleton they output shakes, drops joints, and sometimes swaps them.
+That noise becomes a big problem when an exercise app tries to measure a knee angle, count repetitions, or warn you about bad form.
+In this tutorial we will look at why the jitter happens, then work through the filters people use to fix it: moving averages, exponential smoothing, the One Euro filter, and the Kalman filter.
+We will also cover how to handle missing keypoints, the tradeoff between smoothness and lag, and an experiment comparing all of the filters on a squat sequence.
+Along the way there is an interactive filter lab, a live webcam lab, and a short quiz. The whole tutorial takes about twenty to thirty minutes.
+</script>
+
+<h2>Who this is for</h2>
+<p>You should know what a pose estimator is and be comfortable with basic signals vocabulary (sampling rate, noise, low-pass). No prior Kalman filter experience is needed. By the end you should be able to:</p>
+<ul>
+  <li>explain where keypoint jitter, dropouts and swaps come from;</li>
+  <li>implement a moving average, EMA, One Euro filter and constant-velocity Kalman filter for 2D keypoints;</li>
+  <li>choose and tune a filter for a given exercise and latency budget;</li>
+  <li>handle missing and low-confidence landmarks without inventing motion;</li>
+  <li>measure whether a filter actually helped (jitter, lag, angle error, rep count).</li>
+</ul>
+
+<h2>The pipeline in one picture</h2>
+<figure>
+<svg viewBox="0 0 760 150" role="img" aria-label="Pipeline: video frames go into a per-frame pose detector, which outputs raw keypoints; a temporal filter turns them into stable trajectories that feed exercise analytics." style="width:100%;height:auto;font-family:inherit">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="13" fill="var(--ink)">
+    <rect x="6" y="40" width="120" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="66" y="70" text-anchor="middle" font-weight="600">Video frames</text><text x="66" y="90" text-anchor="middle" fill="var(--ink-2)" font-size="11">30–60 fps camera</text>
+    <rect x="160" y="40" width="130" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="225" y="70" text-anchor="middle" font-weight="600">Pose detector</text><text x="225" y="90" text-anchor="middle" fill="var(--ink-2)" font-size="11">MediaPipe, YOLO-pose</text>
+    <rect x="324" y="40" width="130" height="70" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="389" y="70" text-anchor="middle" font-weight="700">Temporal filter</text><text x="389" y="90" text-anchor="middle" fill="var(--ink-2)" font-size="11">this tutorial</text>
+    <rect x="488" y="40" width="120" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="548" y="70" text-anchor="middle" font-weight="600">Stable</text><text x="548" y="88" text-anchor="middle" font-weight="600">trajectories</text>
+    <rect x="642" y="40" width="112" height="70" rx="10" fill="var(--surface-2)" stroke="var(--line)"/>
+    <text x="698" y="66" text-anchor="middle" font-weight="600">Analytics</text><text x="698" y="84" text-anchor="middle" fill="var(--ink-2)" font-size="11">angles, reps,</text><text x="698" y="98" text-anchor="middle" fill="var(--ink-2)" font-size="11">form feedback</text>
+    <g stroke="var(--muted)" stroke-width="1.6" marker-end="url(#ar)"><line x1="126" y1="75" x2="158" y2="75"/><line x1="290" y1="75" x2="322" y2="75"/><line x1="454" y1="75" x2="486" y2="75"/><line x1="608" y1="75" x2="640" y2="75"/></g>
+    <text x="306" y="30" text-anchor="middle" fill="var(--ink-2)" font-size="11">raw (x, y, conf)</text>
+    <text x="306" y="132" text-anchor="middle" fill="var(--bad)" font-size="11">jitter · gaps · swaps</text>
+  </g>
+</svg>
+<figcaption><b>Figure 1.</b> Where temporal filtering sits in an exercise-analysis pipeline. Diagram created for this tutorial.</figcaption>
+</figure>
+
+<h2>Contents</h2>
+<div class="cards">
+  <a class="card" href="01-intro.html"><span class="n">1</span><h3>Temporal instability</h3><p>How video pose estimation works and why keypoints jitter.</p></a>
+  <a class="card" href="02-trajectories.html"><span class="n">2</span><h3>Landmark trajectories</h3><p>Coordinates, confidence, velocity and noise sources.</p></a>
+  <a class="card" href="03-simple-smoothing.html"><span class="n">3</span><h3>Simple smoothing</h3><p>Moving average, EMA, Gaussian and Savitzky–Golay.</p></a>
+  <a class="card" href="04-one-euro.html"><span class="n">4</span><h3>One Euro filter</h3><p>A low-pass filter whose cutoff follows speed.</p></a>
+  <a class="card" href="05-kalman.html"><span class="n">5</span><h3>Kalman filtering</h3><p>Predict, measure, update with a motion model.</p></a>
+  <a class="card" href="06-missing-keypoints.html"><span class="n">6</span><h3>Missing keypoints</h3><p>Confidence gates, interpolation and prediction.</p></a>
+  <a class="card" href="07-smoothness-latency.html"><span class="n">7</span><h3>Smoothness vs. latency</h3><p>Filter lag and the mobile real-time budget.</p></a>
+  <a class="card" href="08-exercise-analysis.html"><span class="n">8</span><h3>Exercise analysis</h3><p>Angles, rep counting, phases and false alerts.</p></a>
+  <a class="card" href="09-experiment.html"><span class="n">9</span><h3>Experiment</h3><p>Seven filters compared on a squat sequence.</p></a>
+  <a class="card" href="10-limitations.html"><span class="n">10</span><h3>Limitations &amp; future</h3><p>Occlusion, depth and learned temporal models.</p></a>
+  <a class="card" href="lab.html"><span class="n">▶ Interactive</span><h3>Filter Lab</h3><p>Tune filters with sliders and watch the skeleton.</p></a>
+  <a class="card" href="quiz.html"><span class="n">? Interactive</span><h3>Quiz</h3><p>Ten questions to check what you learned.</p></a>
+</div>
+
+<div class="callout"><span class="title">How to use this tutorial</span>Read the sections in order with the menu or the Next buttons at the bottom of each page. Every page has narration at the top. Numbers in superscript like <a class="cite" href="bibliography.html#r1">[1]</a> link to the <a href="bibliography.html">annotated bibliography</a>. The code shown is in <code>experiment/</code> and <code>js/filters.js</code> in this site's GitHub repository.</div>
+
+</div></main>
+<script src="js/site.js"></script>
+</body>
 </html>

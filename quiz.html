@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self-Check Quiz</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="quiz">
+<main><div class="content">
+<div class="kicker">Interactive</div>
+<h1>Self-Check Quiz</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Time to check what you have learned. This quiz has ten multiple choice questions covering the whole tutorial.
+Click an answer to see right away whether it is correct, along with a short explanation and a link back to the section that covers it. Your score is shown at the bottom of the page. Nothing is recorded, so feel free to try again.
+</script>
+<p>Ten questions. Pick an answer to see the explanation. Nothing is graded or saved.</p>
+<div id="quiz"></div>
+<div class="score" id="score">Score: 0 / 0 answered</div>
+<p style="margin-top:16px"><button class="btn secondary" id="reset">Reset quiz</button></p>
+</div></main>
+<script src="js/site.js"></script>
+<script>
+const Q = [
+ { s: "Why do frame-by-frame pose estimators produce jittery keypoints even when the person is still?",
+   o: ["The camera's frame rate is too low", "Each frame is predicted with little or no constraint to agree with the previous frame", "Keypoints are always stored as integers", "The skeleton model has too many joints"],
+   a: 1, w: "Small changes between frames move each independent prediction by a few pixels. See <a href='01-intro.html#why'>Section 1.2</a>." },
+ { s: "A causal moving average with window N = 9 at 30 fps delays the signal by about:",
+   o: ["33 ms", "67 ms", "133 ms", "300 ms"],
+   a: 2, w: "Delay = (N−1)/2 = 4 frames = 133 ms at 30 fps. See <a href='03-simple-smoothing.html#ma'>Section 3.1</a>." },
+ { s: "In the One Euro filter, what does increasing β do?",
+   o: ["Lowers jitter when the joint is still", "Raises the cutoff frequency more for fast movement, reducing lag", "Turns the filter into a moving average", "Makes the filter ignore low-confidence points"],
+   a: 1, w: "f_c = min_cutoff + β·|speed|, so a larger β opens the filter more during fast motion. See <a href='04-one-euro.html#speed'>Section 4.2</a>." },
+ { s: "You tuned β = 15 for MediaPipe's normalized coordinates. You switch to pixel coordinates on a 1080-pixel-wide video. What should happen to β?",
+   o: ["Keep it at 15", "Multiply it by about 1080", "Divide it by about 1080", "Set it to 0"],
+   a: 2, w: "Speeds in pixels are ~1080× larger, so β must be ~1080× smaller to give the same cutoff. See the unit trap in <a href='04-one-euro.html#tune'>Section 4.4</a>." },
+ { s: "In a constant-velocity Kalman filter, what does a large process noise q mean?",
+   o: ["The detector is very noisy", "The body may change velocity quickly, so trust the measurements more", "The filter should skip all updates", "The state has more elements"],
+   a: 1, w: "Large q inflates the predicted covariance, increasing the Kalman gain: faster response, more jitter. See <a href='05-kalman.html#cv'>Section 5.3</a>." },
+ { s: "Which technique lets a Kalman filter reject a one-frame left/right swap?",
+   o: ["Increasing the frame rate", "Innovation gating: skip measurements too far from the prediction", "Using a larger moving-average window", "Setting r = 0"],
+   a: 1, w: "If y²/S exceeds a threshold (e.g. 4σ), the measurement is treated as an outlier. See <a href='05-kalman.html#noisy'>Section 5.4</a>." },
+ { s: "A coach reviews a recorded set after it ends. Which filter gives the best accuracy?",
+   o: ["EMA with α = 0.1", "Moving average with N = 15", "A zero-lag offline filter such as Savitzky–Golay after interpolating short gaps", "No filtering"],
+   a: 2, w: "Offline filters can use future frames and have no lag; they had the lowest RMSE in the experiment. See <a href='09-experiment.html#discussion'>Section 9.4</a>." },
+ { s: "In the experiment, why did the moving average miss a rep with the hysteresis counter?",
+   o: ["It added spikes", "Its lag and averaging flattened a fast rep's bottom so the angle never went below 115°", "It removed the dropout", "It ran too slowly"],
+   a: 1, w: "Over-smoothing attenuates peaks, so thresholds and filter strength must be tuned together. See <a href='08-exercise-analysis.html#reps'>Section 8.2</a>." },
+ { s: "A knee keypoint has been missing for 1.5 seconds. What is the best action?",
+   o: ["Keep predicting with the Kalman filter", "Linearly interpolate from the last point", "Mark the joint as lost and skip analytics that depend on it", "Copy the other knee"],
+   a: 2, w: "Long gaps make predictions unreliable; flag the joint as invalid rather than invent motion. See <a href='06-missing-keypoints.html#discard'>Section 6.4</a>." },
+ { s: "What is the main idea of HTD-Refine (CVPR 2026)?",
+   o: ["Use a bigger CNN on each frame", "Predict velocities and accelerations from video and use them as constraints to avoid both jitter and over-smoothing", "Replace pose estimation with motion capture", "Apply a moving average to 3D poses"],
+   a: 1, w: "It aligns high-order temporal dynamics (velocity, acceleration) predicted by PVA-Net. See <a href='10-limitations.html#learned'>Section 10.4</a>." },
+];
+const box = document.getElementById("quiz"), score = document.getElementById("score");
+function render() {
+  box.innerHTML = Q.map((q, i) => `<div class="q" id="q${i}"><div class="stem">${i + 1}. ${q.s}</div>${q.o.map((o, k) => `<label><input type="radio" name="q${i}" value="${k}">${o}</label>`).join("")}<div class="why"></div></div>`).join("");
+  box.querySelectorAll("input").forEach(inp => inp.addEventListener("change", e => {
+    const i = +e.target.name.slice(1), q = Q[i], el = document.getElementById("q" + i), pick = +e.target.value;
+    el.classList.add("answered");
+    el.querySelectorAll("label").forEach((l, k) => { l.classList.toggle("right", k === q.a); l.classList.toggle("wrong", k === pick && pick !== q.a); });
+    el.querySelectorAll("input").forEach(x => x.disabled = true);
+    el.dataset.ok = pick === q.a ? 1 : 0;
+    el.querySelector(".why").innerHTML = (pick === q.a ? "<b>Correct.</b> " : "<b>Not quite.</b> ") + q.w;
+    tally();
+  }));
+  tally();
+}
+function tally() {
+  const done = box.querySelectorAll(".q.answered"), ok = [...done].filter(d => d.dataset.ok === "1").length;
+  score.textContent = `Score: ${ok} / ${done.length} answered` + (done.length === Q.length ? (ok >= 8 ? " · Great work!" : " · Review the linked sections and try again.") : "");
+}
+document.getElementById("reset").onclick = render;
+render();
+</script>
+</body>
+</html>

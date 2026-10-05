@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Filter Lab</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="lab">
+<main><div class="content" style="max-width:980px">
+<div class="kicker">Interactive</div>
+<h1>Interactive Filter Lab</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Welcome to the filter lab. This page runs the same simulated squat sequence from section nine, and the same four live filters, right in your browser.
+Pick a filter from the menu and move its sliders. The chart updates immediately, and the numbers underneath show jitter while standing, overall angle error, lag on the fast reps, and the rep count.
+Use the zoom buttons to look at one part of the clip: the slow squats, standing still, the fast squats, the motion blur, or the dropout.
+Press play to watch the stick figures. The left figure is the raw detector output and the right one is filtered. Try to find settings that keep the right figure still while standing, without falling behind on the fast reps. That balance is the whole point of this tutorial.
+</script>
+
+<p>This lab runs the simulated squat from <a href="09-experiment.html">Section 9</a> through the filters in <code>js/filters.js</code>. Change a parameter and everything recomputes in a few milliseconds. Suggested experiments are below the lab.</p>
+
+<div class="lab">
+  <div class="panel">
+    <div class="controls">
+      <div><label for="filterSel">Filter</label>
+        <select id="filterSel">
+          <option value="oneeuro">One Euro</option>
+          <option value="kalman">Kalman (constant velocity)</option>
+          <option value="ema">Exponential moving average</option>
+          <option value="ma">Moving average</option>
+        </select></div>
+      <div data-f="oneeuro"><label>min_cutoff (Hz): <span class="val" id="v_mc"></span></label><input type="range" id="p_mc" min="0.1" max="5" step="0.1" value="1.0"></div>
+      <div data-f="oneeuro"><label>β (beta): <span class="val" id="v_beta"></span></label><input type="range" id="p_beta" min="0" max="60" step="1" value="15"></div>
+      <div data-f="kalman"><label>q (process noise): <span class="val" id="v_q"></span></label><input type="range" id="p_q" min="0" max="3" step="0.05" value="1"></div>
+      <div data-f="kalman"><label>r (measurement noise): <span class="val" id="v_r"></span></label><input type="range" id="p_r" min="-6" max="-2" step="0.1" value="-4"></div>
+      <div data-f="kalman"><label><input type="checkbox" id="p_gate" checked> Outlier gate (4σ)</label></div>
+      <div data-f="ema"><label>α (alpha): <span class="val" id="v_alpha"></span></label><input type="range" id="p_alpha" min="0.02" max="1" step="0.01" value="0.3"></div>
+      <div data-f="ma"><label>Window N (frames): <span class="val" id="v_n"></span></label><input type="range" id="p_n" min="1" max="21" step="1" value="7"></div>
+      <div><label><input type="checkbox" id="p_conf" checked> Confidence gating (vis ≥ 0.5)</label></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="btnrow" style="margin-bottom:8px" id="zoomRow">
+      <span class="meta">Zoom:</span>
+      <button class="btn secondary" data-z="0,20">Whole clip</button>
+      <button class="btn secondary" data-z="0,5">Slow reps</button>
+      <button class="btn secondary" data-z="10,14">Standing</button>
+      <button class="btn secondary" data-z="16.8,19.6">Fast reps</button>
+      <button class="btn secondary" data-z="4.2,5.4">Motion blur</button>
+      <button class="btn secondary" data-z="15.8,17">Dropout</button>
+    </div>
+    <div class="chk" style="margin-bottom:6px">
+      <label><span class="swatch" style="background:var(--s-truth)"></span>Truth (dashed)</label>
+      <label><input type="checkbox" id="showRaw" checked><span class="swatch" style="background:var(--s-raw)"></span>Raw</label>
+      <label><span class="swatch" style="background:var(--s-blue)"></span><span id="filtLabel">Filtered</span></label>
+    </div>
+    <div class="chart-wrap">
+      <canvas class="chart" id="chart" aria-label="Knee angle over time: truth, raw and filtered"></canvas>
+      <div class="tip" id="tip"></div>
+    </div>
+    <p class="meta" style="margin:6px 0 0">Knee angle (degrees) vs. time (seconds). Hover for values. The vertical line marks the animation time.</p>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="panel">
+    <div class="stage">
+      <div><canvas id="figRaw" width="400" height="400"></canvas><div class="cap">Raw detector output</div></div>
+      <div><canvas id="figFilt" width="400" height="400"></canvas><div class="cap" id="figFiltCap">Filtered</div></div>
+    </div>
+    <div class="btnrow" style="margin-top:10px">
+      <button class="btn" id="playBtn">▶ Play</button>
+      <label class="meta" for="speed">Speed</label>
+      <select id="speed" style="padding:5px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option></select>
+      <input type="range" id="scrub" min="0" max="599" value="0" style="flex:1;min-width:160px;accent-color:var(--accent)" aria-label="Animation time">
+      <span class="meta" id="tLabel">0.00 s</span>
+    </div>
+  </div>
+</div>
+
+<h2>Suggested experiments</h2>
+<ol>
+<li><b>One Euro, β = 0.</b> It becomes a plain EMA. Zoom to <i>Fast reps</i> and watch the lag grow. Now raise β until the lag drops to 33 ms or 0 ms. What happens to jitter while <i>Standing</i>?</li>
+<li><b>Moving average, N = 15.</b> Very smooth, but look at the rep count and the bottoms of the fast reps. Which section explains this?</li>
+<li><b>Kalman, gate off.</b> Zoom to <i>Motion blur</i> with confidence gating off as well. Then turn each defense back on one at a time.</li>
+<li><b>Kalman, q very high.</b> When q is large, the filter trusts the detector almost completely. Compare its jitter to Raw.</li>
+<li><b>Dropout.</b> Compare One Euro (holds the last value) and Kalman (predicts) in the <i>Dropout</i> zoom. Why does neither follow the truth during the gap?</li>
+</ol>
+<div class="callout"><span class="title">Metrics</span>Same definitions as Section 9: jitter = RMS second difference of the knee angle while standing (10.5–13.5 s); RMSE over the whole clip; lag = best-aligning shift on fast reps (14.5–20 s, 33 ms steps); reps by the hysteresis counter (115°/160°) and single-threshold counter (130°). True rep count = 10.</div>
+</div></main>
+
+<script src="data/squat_sim.js"></script>
+<script src="js/filters.js"></script>
+<script src="js/site.js"></script>
+<script>
+(function () {
+  const D = window.SQUAT_SIM, F = window.PoseFilters;
+  const T = D.t, N = T.length, JOINTS = ["hip", "knee", "ankle"];
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  // ---------- raw angles (with NaN for missing)
+  const rawAngle = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const p = JOINTS.map(j => [D[j].x[i], D[j].y[i]]);
+    rawAngle[i] = p.some(q => q[0] === null) ? NaN : F.jointAngle(p[0], p[1], p[2]);
+  }
+  const truth = D.truth_angle;
+
+  // ---------- run the selected filter over all six coordinate series
+  function params() {
+    return {
+      f: $("filterSel").value, mc: +$("p_mc").value, beta: +$("p_beta").value,
+      q: Math.pow(10, +$("p_q").value), r: Math.pow(10, +$("p_r").value), gate: $("p_gate").checked,
+      alpha: +$("p_alpha").value, n: +$("p_n").value, conf: $("p_conf").checked,
+    };
+  }
+  function make(P) {
+    if (P.f === "oneeuro") return new F.OneEuro(P.mc, P.beta, 1.0);
+    if (P.f === "ema") return new F.EMA(P.alpha);
+    if (P.f === "ma") return new F.MovingAverage(P.n);
+    return new F.Kalman1D(P.q, P.r, P.gate ? 16 : Infinity);
+  }
+  function run(P) {
+    const out = {};
+    const minC = P.conf ? 0.5 : -1;
+    JOINTS.forEach(j => {
+      out[j] = { x: new Float64Array(N), y: new Float64Array(N) };
+      ["x", "y"].forEach(d => {
+        const f = make(P); let last = null;
+        for (let i = 0; i < N; i++) {
+          let z = D[j][d][i]; const c = D[j].vis[i];
+          if (P.f === "kalman") {
+            const v = f.filter(z, T[i], z === null ? 0 : (P.conf ? c : 1), minC);
+            out[j][d][i] = v === null ? NaN : v;
+          } else {
+            const ok = z !== null && c >= minC;
+            if (!ok) z = last !== null ? last : (D[j][d].find(v => v !== null)); else last = z;
+            out[j][d][i] = f.filter(z, T[i]);
+          }
+        }
+      });
+    });
+    const ang = new Float64Array(N);
+    for (let i = 0; i < N; i++) ang[i] = F.jointAngle([out.hip.x[i], out.hip.y[i]], [out.knee.x[i], out.knee.y[i]], [out.ankle.x[i], out.ankle.y[i]]);
+    return { pts: out, ang };
+  }
+
+  // ---------- metrics (match experiment/run_experiment.py)
+  function metrics(a) {
+    let se = 0, n = 0;
+    for (let i = 0; i < N; i++) if (!isNaN(a[i])) { se += (a[i] - truth[i]) ** 2; n++; }
+    const rmse = Math.sqrt(se / n);
+    const rest = []; for (let i = 0; i < N; i++) if (T[i] > 10.5 && T[i] < 13.5) rest.push(a[i]);
+    let j2 = 0, jn = 0; for (let i = 2; i < rest.length; i++) { const d = rest[i] - 2 * rest[i - 1] + rest[i - 2]; if (!isNaN(d)) { j2 += d * d; jn++; } }
+    const jitter = Math.sqrt(j2 / jn);
+    const fi = []; for (let i = 0; i < N; i++) if (T[i] >= 14.5) fi.push(i);
+    const ref = fi.map(i => truth[i]), sig = fi.map(i => isNaN(a[i]) ? 175 : a[i]);
+    const mean = v => v.reduce((s, x) => s + x, 0) / v.length;
+    const rm = mean(ref); let best = -Infinity, bk = 0;
+    for (let k = 0; k <= 10; k++) {
+      const b = sig.slice(k), bm = mean(b); let c = 0;
+      for (let i = 0; i < b.length; i++) c += (ref[i] - rm) * (b[i] - bm);
+      c /= b.length; if (c > best) { best = c; bk = k; }
+    }
+    return { rmse, jitter, lag: bk / D.fps * 1000, reps: countHyst(a), naive: countNaive(a) };
+  }
+  function countHyst(a) { let r = 0, s = "up"; for (const v of a) { if (isNaN(v)) continue; if (s === "up" && v < 115) s = "down"; else if (s === "down" && v > 160) { s = "up"; r++; } } return r; }
+  function countNaive(a) { let r = 0, b = false; for (const v of a) { if (isNaN(v)) continue; if (v < 130 && !b) b = true; else if (v >= 130 && b) { b = false; r++; } } return r; }
+  const rawM = metrics(rawAngle);
+
+  // ---------- chart
+  const cv = $("chart"), ctx = cv.getContext("2d"), tip = $("tip");
+  let view = [0, 20], R = null, frame = 0, hoverI = -1;
+  function size(c) { const r = c.getBoundingClientRect(), dpr = devicePixelRatio || 1; c.width = r.width * dpr; c.height = r.height * dpr; return [r.width, r.height, dpr]; }
+  const PAD = { l: 42, r: 10, t: 10, b: 26 };
+  function draw() {
+    const [w, h, dpr] = size(cv); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    const i0 = T.findIndex(t => t >= view[0]), i1 = Math.min(N - 1, T.findIndex(t => t >= view[1]) < 0 ? N - 1 : T.findIndex(t => t >= view[1]));
+    let lo = Infinity, hi = -Infinity;
+    for (let i = i0; i <= i1; i++) for (const v of [truth[i], R.ang[i], $("showRaw").checked ? rawAngle[i] : NaN]) if (!isNaN(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const padY = Math.max(3, (hi - lo) * 0.08); lo -= padY; hi += padY;
+    const X = t => PAD.l + (t - view[0]) / (view[1] - view[0]) * (w - PAD.l - PAD.r);
+    const Y = v => PAD.t + (1 - (v - lo) / (hi - lo)) * (h - PAD.t - PAD.b);
+    // grid
+    ctx.strokeStyle = css("--line"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1; ctx.font = "11px " + css("--font");
+    const step = niceStep(hi - lo, 5);
+    for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) { ctx.beginPath(); ctx.moveTo(PAD.l, Y(v)); ctx.lineTo(w - PAD.r, Y(v)); ctx.stroke(); ctx.textAlign = "right"; ctx.fillText(v.toFixed(0) + "°", PAD.l - 6, Y(v) + 4); }
+    const ts = niceStep(view[1] - view[0], 8);
+    ctx.textAlign = "center";
+    for (let t = Math.ceil(view[0] / ts) * ts; t <= view[1] + 1e-9; t += ts) ctx.fillText(+t.toFixed(2) + " s", X(t), h - 8);
+    const line = (arr, col, wdt, dash) => {
+      ctx.strokeStyle = col; ctx.lineWidth = wdt; ctx.setLineDash(dash || []); ctx.beginPath(); let pen = false;
+      for (let i = i0; i <= i1; i++) { const v = arr[i]; if (isNaN(v)) { pen = false; continue; } if (!pen) { ctx.moveTo(X(T[i]), Y(v)); pen = true; } else ctx.lineTo(X(T[i]), Y(v)); }
+      ctx.stroke(); ctx.setLineDash([]);
+    };
+    if ($("showRaw").checked) line(rawAngle, css("--s-raw"), 1.2);
+    line(truth, css("--s-truth"), 1.6, [5, 4]);
+    line(R.ang, css("--s-blue"), 2);
+    // animation cursor
+    if (T[frame] >= view[0] && T[frame] <= view[1]) { ctx.strokeStyle = css("--accent"); ctx.globalAlpha = .5; ctx.beginPath(); ctx.moveTo(X(T[frame]), PAD.t); ctx.lineTo(X(T[frame]), h - PAD.b); ctx.stroke(); ctx.globalAlpha = 1; }
+    if (hoverI >= i0 && hoverI <= i1) {
+      ctx.strokeStyle = css("--muted"); ctx.beginPath(); ctx.moveTo(X(T[hoverI]), PAD.t); ctx.lineTo(X(T[hoverI]), h - PAD.b); ctx.stroke();
+      [[truth[hoverI], css("--s-truth")], [R.ang[hoverI], css("--s-blue")]].forEach(([v, c]) => { if (isNaN(v)) return; ctx.fillStyle = c; ctx.strokeStyle = css("--surface"); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(X(T[hoverI]), Y(v), 4.5, 0, 7); ctx.fill(); ctx.stroke(); });
+    }
+    cv._map = { X, i0, i1, w };
+  }
+  function niceStep(range, n) { const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p; }
+  cv.addEventListener("mousemove", e => {
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, m = cv._map; if (!m) return;
+    const t = view[0] + (x - PAD.l) / (m.w - PAD.l - PAD.r) * (view[1] - view[0]);
+    hoverI = Math.max(m.i0, Math.min(m.i1, Math.round(t * D.fps)));
+    const f = v => isNaN(v) ? "—" : v.toFixed(1) + "°";
+    tip.innerHTML = `<b>${T[hoverI].toFixed(2)} s</b><br>Truth ${f(truth[hoverI])}<br>Raw ${f(rawAngle[hoverI])}<br>${$("filtLabel").textContent} ${f(R.ang[hoverI])}<br>knee visibility ${D.knee.vis[hoverI].toFixed(2)}`;
+    tip.style.display = "block"; tip.style.left = Math.min(x + 12, r.width - 150) + "px"; tip.style.top = "10px"; draw();
+  });
+  cv.addEventListener("mouseleave", () => { hoverI = -1; tip.style.display = "none"; draw(); });
+
+  // ---------- stick figures
+  function drawFig(canvas, getP, col) {
+    const c = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
+    c.clearRect(0, 0, W, H);
+    const S = 0.8, map = p => [(p[0] - 0.22) / S * W, (p[1] - 0.14) / S * H];
+    // ground + truth ghost
+    c.strokeStyle = css("--line"); c.lineWidth = 2; c.beginPath(); c.moveTo(0, map([0, 0.9])[1] + 8); c.lineTo(W, map([0, 0.9])[1] + 8); c.stroke();
+    const tP = JOINTS.map(j => map([D[j + "_truth"].x[frame], D[j + "_truth"].y[frame]]));
+    c.setLineDash([6, 5]); c.strokeStyle = css("--muted"); c.lineWidth = 3; c.beginPath(); c.moveTo(...tP[0]); c.lineTo(...tP[1]); c.lineTo(...tP[2]); c.stroke(); c.setLineDash([]);
+    const P = JOINTS.map(j => getP(j));
+    if (P.some(p => p === null || isNaN(p[0]))) { c.fillStyle = css("--bad"); c.font = "bold 16px " + css("--font"); c.fillText("knee missing", 16, 30); }
+    const Q = P.map(p => p && !isNaN(p[0]) ? map(p) : null);
+    c.strokeStyle = col; c.lineWidth = 7; c.lineCap = "round"; c.beginPath();
+    if (Q[0] && Q[1]) { c.moveTo(...Q[0]); c.lineTo(...Q[1]); }
+    if (Q[1] && Q[2]) { c.moveTo(...Q[1]); c.lineTo(...Q[2]); }
+    c.stroke();
+    // torso (fixed lean for context)
+    if (Q[0]) { c.lineWidth = 7; c.beginPath(); c.moveTo(...Q[0]); c.lineTo(Q[0][0] + 0.05 / S * W, Q[0][1] - 0.24 / S * H); c.stroke(); }
+    Q.forEach((q, k) => { if (!q) return; c.fillStyle = k === 1 ? css("--s-orange") : col; c.beginPath(); c.arc(q[0], q[1], 9, 0, 7); c.fill(); });
+    const vis = D.knee.vis[frame];
+    c.fillStyle = css("--ink-2"); c.font = "14px " + css("--font"); c.fillText(`knee vis ${vis.toFixed(2)}`, 16, H - 16);
+  }
+  function drawFigs() {
+    drawFig($("figRaw"), j => D[j].x[frame] === null ? null : [D[j].x[frame], D[j].y[frame]], css("--s-raw"));
+    drawFig($("figFilt"), j => [R.pts[j].x[frame], R.pts[j].y[frame]], css("--s-blue"));
+    $("tLabel").textContent = T[frame].toFixed(2) + " s"; $("scrub").value = frame;
+  }
+
+  // ---------- stats
+  function stat(k, v, s, better) { return `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}${better ? ` <span class="pill ${better[0]}">${better[1]}</span>` : ""}</div></div>`; }
+  function renderStats(m) {
+    const cmp = (a, b, lowerBetter = true) => (lowerBetter ? a < b : a > b) ? ["good", "better than raw"] : ["bad", "worse than raw"];
+    $("stats").innerHTML =
+      stat("Jitter at rest", m.jitter.toFixed(2), `raw ${rawM.jitter.toFixed(2)} °/frame²`, cmp(m.jitter, rawM.jitter)) +
+      stat("Angle RMSE", m.rmse.toFixed(2) + "°", `raw ${rawM.rmse.toFixed(2)}°`, cmp(m.rmse, rawM.rmse)) +
+      stat("Lag (fast reps)", m.lag.toFixed(0) + " ms", "raw 0 ms") +
+      stat("Reps (hysteresis)", m.reps, "true 10", m.reps === 10 ? ["good", "correct"] : ["bad", "wrong"]) +
+      stat("Reps (single threshold)", m.naive, `raw ${rawM.naive}`, m.naive === 10 ? ["good", "correct"] : ["bad", "wrong"]);
+  }
+
+  // ---------- wiring
+  const labels = { oneeuro: "One Euro", kalman: "Kalman", ema: "EMA", ma: "Moving avg" };
+  function update() {
+    const P = params();
+    document.querySelectorAll("[data-f]").forEach(el => el.style.display = el.dataset.f === P.f ? "" : "none");
+    $("v_mc").textContent = P.mc.toFixed(1); $("v_beta").textContent = P.beta;
+    $("v_q").textContent = P.q < 10 ? P.q.toFixed(2) : P.q.toFixed(0); $("v_r").textContent = P.r.toExponential(1);
+    $("v_alpha").textContent = P.alpha.toFixed(2); $("v_n").textContent = P.n;
+    $("filtLabel").textContent = labels[P.f]; $("figFiltCap").textContent = labels[P.f] + " output (dashed = truth)";
+    R = run(P); renderStats(metrics(R.ang)); draw(); drawFigs();
+  }
+  document.querySelectorAll(".controls input, .controls select, #showRaw").forEach(el => el.addEventListener("input", update));
+  document.querySelectorAll("#zoomRow [data-z]").forEach(b => b.onclick = () => {
+    view = b.dataset.z.split(",").map(Number); frame = Math.round(view[0] * D.fps); draw(); drawFigs();
+  });
+  let playing = false, lastTs = 0, acc = 0;
+  $("playBtn").onclick = () => { playing = !playing; $("playBtn").textContent = playing ? "❚❚ Pause" : "▶ Play"; if (playing) { lastTs = performance.now(); requestAnimationFrame(tick); } };
+  function tick(ts) {
+    if (!playing) return;
+    acc += (ts - lastTs) / 1000 * D.fps * +$("speed").value; lastTs = ts;
+    const steps = Math.floor(acc); acc -= steps;
+    if (steps) { frame = (frame + steps) % N; drawFigs(); draw(); }
+    requestAnimationFrame(tick);
+  }
+  $("scrub").addEventListener("input", e => { frame = +e.target.value; drawFigs(); draw(); });
+  addEventListener("resize", draw); addEventListener("themechange", () => { draw(); drawFigs(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { draw(); drawFigs(); });
+  update();
+})();
+</script>
+</body>
+</html>

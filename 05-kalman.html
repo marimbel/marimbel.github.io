@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5 · Kalman Filtering</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="05-kalman">
+<main><div class="content">
+<div class="kicker">Section 5</div>
+<h1>Kalman Filtering for Keypoint Tracking</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section five introduces the Kalman filter, which takes a different approach from the One Euro filter.
+Instead of only smoothing, the Kalman filter keeps a small model of how the joint moves. In our case the state is the joint's position and velocity, and we assume the velocity stays roughly constant from one frame to the next.
+Every frame has two steps. First, predict: move the state forward using the velocity, and grow the uncertainty. Second, update: compare the prediction with the new measurement, and blend them using the Kalman gain, which depends on how uncertain each one is.
+Because it has a prediction step, the Kalman filter can keep going when a keypoint is missing, it can down-weight low-confidence measurements, and it can reject outliers that are too far from the prediction.
+The cost is more math, two noise parameters to tune, and overshoot when a movement stops suddenly.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#state">State vectors</a></li><li><a href="#pu">Prediction and measurement updates</a></li><li><a href="#cv">Position/velocity motion models</a></li><li><a href="#noisy">Handling noisy observations</a></li><li><a href="#vs">Kalman vs. One Euro filtering</a></li></ol></div>
+
+<h2 id="state">5.1 State vectors</h2>
+<p>The Kalman filter, introduced by R. E. Kalman in 1960 <a class="cite" href="bibliography.html#r7">[7]</a>, estimates a hidden <b>state</b> from noisy measurements using a linear model of how the state changes. Welch and Bishop's introduction is the standard practical reference for the equations below <a class="cite" href="bibliography.html#r8">[8]</a>.</p>
+<p>For one keypoint coordinate we use a two-element state, position and velocity:</p>
+<span class="eq">s<sub>k</sub> = [ p<sub>k</sub> , v<sub>k</sub> ]<sup>T</sup>,&nbsp;&nbsp;&nbsp; with covariance P<sub>k</sub> (2×2) describing how unsure we are about each</span>
+<p>Other common choices are a 4-element state [x, y, v<sub>x</sub>, v<sub>y</sub>] per joint (equivalent to two independent filters if x and y noise are independent), a 3-element constant-acceleration state [p, v, a], or one large state for the whole skeleton. We keep it per-coordinate so it plugs into the same pipeline as the One Euro filter.</p>
+
+<h2 id="pu">5.2 Prediction and measurement updates</h2>
+<figure>
+<svg viewBox="0 0 720 250" role="img" aria-label="Kalman cycle: predict step moves the state forward and grows uncertainty; measurement arrives; update step blends prediction and measurement using Kalman gain; result feeds the next predict step. If the measurement is missing or rejected, the update is skipped." style="width:100%;height:auto">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="12.5" fill="var(--ink)">
+  <rect x="40" y="70" width="200" height="90" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="140" y="96" text-anchor="middle" font-weight="700">1. PREDICT</text>
+  <text x="140" y="120" text-anchor="middle">s⁻ = F s</text><text x="140" y="142" text-anchor="middle">P⁻ = F P Fᵀ + Q</text>
+  <rect x="440" y="70" width="240" height="90" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="560" y="96" text-anchor="middle" font-weight="700">2. UPDATE</text>
+  <text x="560" y="118" text-anchor="middle">K = P⁻Hᵀ (H P⁻ Hᵀ + R)⁻¹</text><text x="560" y="138" text-anchor="middle">s = s⁻ + K (z − H s⁻)</text><text x="560" y="155" text-anchor="middle" font-size="11">P = (I − K H) P⁻</text>
+  <rect x="280" y="10" width="130" height="44" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+  <text x="345" y="30" text-anchor="middle" font-weight="600">measurement z</text><text x="345" y="46" text-anchor="middle" font-size="11" fill="var(--ink-2)">keypoint + confidence</text>
+  <rect x="270" y="190" width="160" height="50" rx="8" fill="var(--warn-soft)" stroke="var(--warn)"/>
+  <text x="350" y="211" text-anchor="middle" font-weight="600">missing / low conf /</text><text x="350" y="228" text-anchor="middle" font-weight="600">outlier → skip update</text>
+  <g stroke="var(--muted)" stroke-width="1.6" fill="none" marker-end="url(#a5)">
+    <line x1="240" y1="115" x2="438" y2="115"/>
+    <path d="M410 32 H560 V68"/>
+    <path d="M560 160 V178 H660 V230 H40 V168 " stroke-dasharray="0"/>
+    <path d="M240 140 Q 260 215 268 215"/>
+  </g>
+  <text x="340" y="108" text-anchor="middle" font-size="11" fill="var(--ink-2)">prior s⁻, P⁻</text>
+  <text x="660" y="245" text-anchor="end" font-size="11" fill="var(--ink-2)">next frame</text>
+  </g>
+</svg>
+<figcaption><b>Figure 5.1.</b> The predict–update cycle run once per video frame. Equations follow Welch and Bishop <a class="cite" href="bibliography.html#r8">[8]</a>. Diagram created for this tutorial.</figcaption>
+</figure>
+<p><b>Predict.</b> Move the state forward one time step with the motion model F, and increase the covariance by the process noise Q, which says "the body may have accelerated in a way the model did not expect."</p>
+<p><b>Update.</b> The detector gives a measurement z of position only, so H = [1 0]. The <b>innovation</b> y = z − Hs⁻ is how surprised we are. Its expected variance is S = HP⁻Hᵀ + R. The <b>Kalman gain</b> K = P⁻Hᵀ/S decides how far to move toward the measurement: if the prediction is uncertain (P⁻ large) relative to the measurement noise R, K is close to 1 and we trust the detector; if the detector is noisy relative to the prediction, K is small and we trust the model. Because K also has a velocity component, every measurement also corrects the velocity estimate.</p>
+
+<h2 id="cv">5.3 Position/velocity motion models</h2>
+<p>The <b>constant-velocity</b> (CV) model assumes the velocity changes only through random acceleration with variance q:</p>
+<span class="eq">F = [ 1  Δt ; 0  1 ],&nbsp;&nbsp;&nbsp; Q = q · [ Δt⁴/4  Δt³/2 ; Δt³/2  Δt² ],&nbsp;&nbsp;&nbsp; H = [ 1  0 ],&nbsp;&nbsp;&nbsp; R = r</span>
+<pre><code><span class="k">class</span> Kalman1D:
+    <span class="k">def</span> __init__(self, q=10.0, r=1e-4):
+        self.q, self.r, self.s, self.P = q, r, None, None
+
+    <span class="k">def</span> predict(self, t):
+        dt = t - self.t_prev
+        F = np.array([[1, dt], [0, 1]])
+        Q = self.q * np.array([[dt**4/4, dt**3/2], [dt**3/2, dt**2]])
+        self.s, self.P, self.t_prev = F @ self.s, F @ self.P @ F.T + Q, t
+
+    <span class="k">def</span> update(self, z, r_scale=1.0, gate=16.0):
+        H = np.array([[1.0, 0.0]])
+        y = z - (H @ self.s)[0]                      <span class="c"># innovation</span>
+        S = (H @ self.P @ H.T)[0, 0] + self.r * r_scale
+        <span class="k">if</span> y * y / S &gt; gate:                         <span class="c"># > 4 sigma: outlier</span>
+            <span class="k">return False</span>
+        K = (self.P @ H.T) / S
+        self.s = self.s + K[:, 0] * y
+        self.P = (np.eye(2) - K @ H) @ self.P
+        <span class="k">return True</span></code></pre>
+<p>The full version, with initialization and confidence handling, is in <code>experiment/filters.py</code>; a matrix-free JavaScript version is in <code>js/filters.js</code>.</p>
+<p><b>Choosing r and q.</b> r is the detector's position noise variance. You can measure it directly: record someone standing still and take the variance of a keypoint coordinate (our simulated jitter of σ ≈ 0.0045 gives r ≈ 2×10⁻⁵; we used 10⁻⁴ to also absorb slow drift). q sets how quickly the filter believes velocity can change. Large q → fast response but more jitter; small q → smooth but overshoots at direction changes. For human limbs in normalized coordinates, q between about 5 and 60 worked in our tests, and q = 10 was a good balance.</p>
+<p><b>Other models.</b> A constant-acceleration model adds a third state and follows curved motions better, but its extra derivative makes it noisier. For repetitive exercises you could even use a periodic model, but that breaks as soon as the person pauses. An offline <b>Rauch–Tung–Striebel smoother</b> runs the Kalman filter forward and then backward through a recorded clip, giving zero-lag results like the Gaussian filter in Section 3.</p>
+
+<h2 id="noisy">5.4 Handling noisy observations</h2>
+<p>The Kalman filter has three built-in ways to deal with bad measurements, all used in our experiment:</p>
+<ol>
+<li><b>Confidence-scaled noise:</b> R<sub>k</sub> = r / c<sub>k</sub>². A keypoint with visibility 0.6 is trusted about 2.8× less than one with 1.0.</li>
+<li><b>Skip the update</b> when the keypoint is missing or c<sub>k</sub> &lt; 0.5. The prediction alone carries the estimate forward (Section 6).</li>
+<li><b>Innovation gating:</b> if y²/S &gt; 16 (more than 4 standard deviations from the prediction), treat the measurement as an outlier. This removes single-frame spikes and many left/right swaps, which simple low-pass filters cannot do.</li>
+</ol>
+<div class="callout warn"><span class="title">Gating can lock out real motion</span>If the person really does move suddenly, the measurement may be rejected several frames in a row while P keeps growing. Because S grows with P, the gate eventually opens again, but there can be a short delay. Counting consecutive rejections and resetting the filter after a few is a common safeguard.</div>
+
+<h2 id="vs">5.5 Kalman vs. One Euro filtering</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>One Euro</th><th>Kalman (CV)</th></tr>
+<tr><td>Idea</td><td>Low-pass with speed-dependent cutoff</td><td>Motion model + measurement blending</td></tr>
+<tr><td>Parameters</td><td>f<sub>c,min</sub>, β (d<sub>cutoff</sub>)</td><td>q, r (plus gate, initial P)</td></tr>
+<tr><td>Lag on fast motion</td><td>Small (33 ms in our test)</td><td>≈ 0 (prediction cancels lag)</td></tr>
+<tr><td>Jitter at rest</td><td><span class="pill good">Low</span> (1.0°/frame²)</td><td><span class="pill warn">Higher</span> (2.3°/frame²)</td></tr>
+<tr><td>Missing frames</td><td>Needs external hold/interpolation</td><td><span class="pill good">Predicts through gaps</span></td></tr>
+<tr><td>Uses confidence</td><td>No (needs a wrapper)</td><td><span class="pill good">Yes</span>, via R</td></tr>
+<tr><td>Outlier rejection</td><td>No</td><td><span class="pill good">Yes</span>, via gating</td></tr>
+<tr><td>Failure mode</td><td>Lag if β too low; jitter if f<sub>c,min</sub> too high</td><td>Overshoot when motion stops or reverses</td></tr>
+<tr><td>Cost</td><td>~10 flops</td><td>~30 flops (2×2 matrices)</td></tr>
+</table></div>
+<p>Numbers come from the experiment in <a href="09-experiment.html">Section 9</a>. A practical pattern is to use both: a Kalman filter (or just its gating and gap prediction) to clean outliers and fill gaps, followed by a One Euro filter for display-quality smoothness.</p>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>State = [position, velocity]; predict with F and Q, correct with K.</li>
+<li>q controls responsiveness, r the trust in the detector; measure r from a still recording.</li>
+<li>Confidence-scaled R, skipped updates and innovation gating make it robust to bad keypoints.</li>
+<li>Kalman wins on lag, gaps and outliers; One Euro wins on smoothness at rest and simplicity.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

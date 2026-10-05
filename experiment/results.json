@@ -1,0 +1,66 @@
+{
+  "Raw": {
+    "rmse_deg": 4.086059477309849,
+    "rest_jitter_deg": 5.047658413899417,
+    "fast_lag_ms": 0.0,
+    "fast_peak_err_deg": 13.650118069653786,
+    "reps_hysteresis": 10,
+    "reps_naive": 12,
+    "us_per_update": 0.0
+  },
+  "Moving avg": {
+    "rmse_deg": 11.945383710692639,
+    "rest_jitter_deg": 0.7858443677489574,
+    "fast_lag_ms": 100.0,
+    "fast_peak_err_deg": 36.57665581960728,
+    "reps_hysteresis": 9,
+    "reps_naive": 10,
+    "us_per_update": 1.0818116668076527
+  },
+  "EMA": {
+    "rmse_deg": 9.170615913673915,
+    "rest_jitter_deg": 1.2358242155771215,
+    "fast_lag_ms": 66.66666666666667,
+    "fast_peak_err_deg": 35.72699091190157,
+    "reps_hysteresis": 10,
+    "reps_naive": 10,
+    "us_per_update": 0.4226599997912849
+  },
+  "One Euro": {
+    "rmse_deg": 5.782281268373143,
+    "rest_jitter_deg": 1.0094465343148145,
+    "fast_lag_ms": 33.333333333333336,
+    "fast_peak_err_deg": 31.057826943904473,
+    "reps_hysteresis": 10,
+    "reps_naive": 10,
+    "us_per_update": 1.6070330558114343
+  },
+  "Kalman": {
+    "rmse_deg": 2.9950915993789557,
+    "rest_jitter_deg": 2.2652893247133323,
+    "fast_lag_ms": 0.0,
+    "fast_peak_err_deg": 8.957600118351849,
+    "reps_hysteresis": 10,
+    "reps_naive": 10,
+    "us_per_update": 18.576075555643
+  },
+  "Gaussian (offline)": {
+    "rmse_deg": 2.572542283616548,
+    "rest_jitter_deg": 0.1982547269706827,
+    "fast_lag_ms": 0.0,
+    "fast_peak_err_deg": 7.68848551232108,
+    "reps_hysteresis": 10,
+    "reps_naive": 10,
+    "us_per_update": null
+  },
+  "Savitzky-Golay (offline)": {
+    "rmse_deg": 2.3339017025531463,
+    "rest_jitter_deg": 0.7842899974003297,
+    "fast_lag_ms": 0.0,
+    "fast_peak_err_deg": 6.646735445618788,
+    "reps_hysteresis": 10,
+    "reps_naive": 10,
+    "us_per_update": null
+  },
+  "_true_reps": 10
+}

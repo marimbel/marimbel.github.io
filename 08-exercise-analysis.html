@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8 · Exercise Analysis</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="08-exercise-analysis">
+<main><div class="content">
+<div class="kicker">Section 8</div>
+<h1>Applications to Exercise Analysis</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+Section eight connects the filters to what an exercise app actually does with them.
+First, joint angles. Once the hip, knee and ankle are stable, the knee angle is stable too, and it becomes the main signal for squats and lunges.
+Second, rep counting. A good counter uses two thresholds instead of one, which is called hysteresis, so that jitter near a single line cannot be counted as an extra rep. With the raw signal, a single-threshold counter found twelve reps when there were only ten.
+Third, phase detection: splitting each rep into descent, bottom, ascent and top using the sign of angular velocity, which only works if velocity is smooth.
+And fourth, form feedback. Requiring an error to persist for several frames before warning the user removes most false alerts.
+We finish with the complete pipeline in code.
+</script>
+
+<div class="toc-box"><b>On this page</b><ol><li><a href="#angles">Stable knee/hip/elbow angles</a></li><li><a href="#reps">Rep counting</a></li><li><a href="#phase">Phase detection</a></li><li><a href="#alerts">Reducing false form-error alerts</a></li><li><a href="#pipe">Putting it together</a></li></ol></div>
+
+<h2 id="angles">8.1 Stable knee, hip and elbow angles</h2>
+<p>A joint angle is the angle at point B between segments BA and BC. Ullah et al. compute it with the cosine rule from three keypoints <a class="cite" href="bibliography.html#r4">[4]</a>; the dot-product form below is the same thing:</p>
+<span class="eq">θ = arccos( (A−B)·(C−B) / (|A−B| |C−B|) )</span>
+<pre><code><span class="k">def</span> joint_angle(a, b, c):
+    v1, v2 = a - b, c - b
+    cos = np.sum(v1*v2, axis=1) / (np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1))
+    <span class="k">return</span> np.degrees(np.arccos(np.clip(cos, -1, 1)))</code></pre>
+<p>Common triplets: <b>knee</b> = hip–knee–ankle (squat, lunge), <b>hip</b> = shoulder–hip–knee (hinge, deadlift), <b>elbow</b> = shoulder–elbow–wrist (push-up, curl). Two design decisions:</p>
+<ul>
+<li><b>Filter positions, then compute angles</b> (what we do), or <b>compute angles, then filter the angle</b>. Filtering positions keeps the skeleton drawable and lets confidence gating work per joint; filtering the angle is cheaper (one filter instead of six) and its parameters are in degrees, which are easier to reason about. Both work; do not do both with heavy settings or the lag adds up.</li>
+<li><b>Near 180° the angle is less sensitive.</b> arccos flattens near a straight leg, so jitter on a nearly straight knee looks smaller in degrees than the same jitter at 90°. Thresholds near full extension (e.g. "lockout") need more margin.</li>
+</ul>
+<p>From the angle series, Ullah et al. derive range of motion (max − min angle), angular velocity, and per-repetition similarity to a reference using dynamic time warping and normalized cross-correlation, reporting joint-angle errors of about 1.6–3.2% against clinician measurements <a class="cite" href="bibliography.html#r4">[4]</a>. Every one of those quantities depends on how clean the angle is.</p>
+
+<h2 id="reps">8.2 Rep counting</h2>
+<p>A rep is a cycle: the angle goes down past a "bottom" level and comes back up past a "top" level. The simplest counter uses one threshold and counts each upward crossing. With noise near that threshold, a single real crossing can produce several.</p>
+<figure>
+<svg viewBox="0 0 700 190" role="img" aria-label="Rep counter state machine with two states, UP and DOWN. From UP, if angle drops below 115 degrees go to DOWN. From DOWN, if angle rises above 160 degrees go to UP and add one rep. A gap between thresholds ignores jitter." style="width:100%;height:auto">
+  <defs><marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>
+  <g font-size="13" fill="var(--ink)">
+  <circle cx="170" cy="95" r="52" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="170" y="92" text-anchor="middle" font-weight="700">UP</text><text x="170" y="110" text-anchor="middle" font-size="11" fill="var(--ink-2)">standing</text>
+  <circle cx="530" cy="95" r="52" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="530" y="92" text-anchor="middle" font-weight="700">DOWN</text><text x="530" y="110" text-anchor="middle" font-size="11" fill="var(--ink-2)">in the squat</text>
+  <g stroke="var(--muted)" stroke-width="1.8" fill="none" marker-end="url(#a8)"><path d="M215 70 Q350 15 485 70"/><path d="M485 120 Q350 175 215 120"/></g>
+  <text x="350" y="30" text-anchor="middle">θ &lt; 115°</text>
+  <text x="350" y="172" text-anchor="middle">θ &gt; 160°  →  reps += 1</text>
+  <text x="350" y="100" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">115°–160°: no change</text>
+  <text x="350" y="116" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">(jitter here is ignored)</text>
+  </g>
+</svg>
+<figcaption><b>Figure 8.1.</b> A hysteresis rep counter. The 45° dead band between thresholds absorbs jitter. Diagram created for this tutorial.</figcaption>
+</figure>
+<p>Results on our 10-rep simulated sequence (Section 9):</p>
+<div class="table-wrap"><table>
+<tr><th>Signal</th><th class="num">Single threshold (130°)</th><th class="num">Hysteresis (115° / 160°)</th></tr>
+<tr><td>Raw</td><td class="num">12 ✗</td><td class="num">10 ✓</td></tr>
+<tr><td>Moving average (N = 7)</td><td class="num">10 ✓</td><td class="num">9 ✗</td></tr>
+<tr><td>EMA, One Euro, Kalman</td><td class="num">10 ✓</td><td class="num">10 ✓</td></tr>
+</table></div>
+<p>Two lessons. First, either filtering or hysteresis alone fixed the double counts on the raw signal; use both. Second, too much smoothing can cause the <i>opposite</i> error: the moving average's attenuated bottom (Section 7.3) did not get below 115° on one fast rep, so a real rep was missed. Thresholds and filter strength must be chosen together.</p>
+
+<h2 id="phase">8.3 Phase detection</h2>
+<p>Many form rules only apply in one phase ("knees caving in on the way <i>up</i>", "pause at the bottom"). Phases come from the sign of angular velocity ω = dθ/dt:</p>
+<ul>
+<li><b>Descent:</b> ω &lt; −ω<sub>0</sub> &nbsp; <b>Ascent:</b> ω &gt; +ω<sub>0</sub> &nbsp; <b>Bottom / Top:</b> |ω| ≤ ω<sub>0</sub>, split by whether θ is below or above the midpoint.</li>
+</ul>
+<p>The dead band ω<sub>0</sub> (e.g. 20–30°/s) plays the same role as rep-counter hysteresis. As Section 1.3 showed, raw angular velocity can have about 70°/s of noise, so on the raw signal the phase label would flip almost every frame. Velocity must come from a filtered angle, from the One Euro filter's internal dx̂, or from the Kalman velocity state (which is a nice side benefit of the Kalman filter: it estimates velocity for free).</p>
+
+<h2 id="alerts">8.4 Reducing false form-error alerts</h2>
+<p>Form feedback that fires on noise trains users to ignore it; the review by Tharatipyakul et al. identifies managing erroneous feedback as an open problem <a class="cite" href="bibliography.html#r1">[1]</a>. Filtering is the first defense. Three more patterns help:</p>
+<ol>
+<li><b>Persistence (debouncing).</b> Only report a form error if it holds for k consecutive valid frames (e.g. 5 frames ≈ 170 ms). A one-frame spike can never trigger it.</li>
+<li><b>Margins.</b> Warn at "knee angle &lt; 70°" only if the angle is below 70° minus a margin about two times the remaining jitter.</li>
+<li><b>Per-rep decisions.</b> Evaluate depth, tempo and symmetry once per rep (from the rep's whole angle curve) rather than every frame. This allows non-causal smoothing inside each completed rep at the cost of feedback arriving when the rep ends, which is how Ullah et al.'s DTW-based scoring works <a class="cite" href="bibliography.html#r4">[4]</a>.</li>
+</ol>
+
+<h2 id="pipe">8.5 Putting it together</h2>
+<pre><code><span class="c"># one per landmark per coordinate</span>
+filters = {(j, d): Kalman1D(q=10, r=1e-4) <span class="k">for</span> j <span class="k">in</span> JOINTS <span class="k">for</span> d <span class="k">in</span> <span class="c">"xy"</span>}
+smooth  = {(j, d): OneEuro(1.0, 15.0)     <span class="k">for</span> j <span class="k">in</span> JOINTS <span class="k">for</span> d <span class="k">in</span> <span class="c">"xy"</span>}
+counter, bad_frames = RepCounter(down=115, up=160), 0
+
+<span class="k">for</span> frame, t <span class="k">in</span> camera:
+    lms = detector.detect_for_video(frame, t)            <span class="c"># raw x, y, visibility</span>
+    pts, valid = {}, True
+    <span class="k">for</span> j <span class="k">in</span> JOINTS:
+        lm = lms[j] <span class="k">if</span> lms <span class="k">else None</span>
+        z  = (lm.x, lm.y) <span class="k">if</span> lm <span class="k">else</span> (None, None)
+        c  = lm.visibility <span class="k">if</span> lm <span class="k">else</span> 0.0
+        p  = [filters[j, d].filter(z[i], t, confidence=c) <span class="k">for</span> i, d <span class="k">in</span> enumerate(<span class="c">"xy"</span>)]
+        p  = [smooth[j, d].filter(p[i], t) <span class="k">for</span> i, d <span class="k">in</span> enumerate(<span class="c">"xy"</span>)]
+        pts[j] = np.array(p)
+        valid &amp;= filters[j, <span class="c">"x"</span>].P[0, 0] &lt; MAX_VAR        <span class="c"># joint lost?</span>
+    <span class="k">if not</span> valid <span class="k">or not</span> bone_ok(pts[<span class="c">"hip"</span>], pts[<span class="c">"knee"</span>], pts[<span class="c">"ankle"</span>], *ref):
+        <span class="k">continue</span>                                         <span class="c"># skip analytics this frame</span>
+    angle = joint_angle(pts[<span class="c">"hip"</span>], pts[<span class="c">"knee"</span>], pts[<span class="c">"ankle"</span>])
+    counter.update(angle)
+    bad_frames = bad_frames + 1 <span class="k">if</span> angle &lt; MIN_SAFE - MARGIN <span class="k">else</span> 0
+    <span class="k">if</span> bad_frames == 5: say(<span class="c">"Control the depth"</span>)</code></pre>
+<p>This is pseudocode (helper classes like <code>RepCounter</code> are left out) but every piece corresponds to a section of this tutorial: Kalman for gating, gaps and outliers (5, 6), One Euro for final smoothness (4), validity checks (6.4), angle (8.1), hysteresis counter (8.2) and persistence for alerts (8.4).</p>
+
+<div class="keypoints"><h3>Summary</h3><ul>
+<li>Stable keypoints → stable angles → reliable ROM, velocity and similarity scores.</li>
+<li>Use hysteresis for reps and dead bands for phases; tune them with the filter, not separately.</li>
+<li>Debounce form alerts and skip frames with invalid joints.</li>
+</ul></div>
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>

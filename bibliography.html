@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotated Bibliography</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="bibliography">
+<main><div class="content">
+<div class="kicker">Reference</div>
+<h1>Annotated Bibliography</h1>
+<div id="voice"></div>
+<script type="text/plain" id="narration">
+This is the annotated bibliography. References are numbered in the order they first appear in the tutorial, and every bracketed number in the text links here.
+Each entry gives the title, authors, date and source, followed by a short synopsis of what the work contains and how I used it, and a reliability rating that explains what kind of source it is and how much weight to give it.
+Peer-reviewed journal and conference papers are rated high. Recent arXiv preprints are rated medium to high, because they have not all completed peer review yet.
+</script>
+<p>Listed in order of first appearance. Reliability: <span class="pill good">High</span> peer-reviewed or primary technical source · <span class="pill warn">Medium–High</span> preprint or vendor documentation.</p>
+
+<div class="ref" id="r1">
+<p class="cit">[1] A. Tharatipyakul, T. Srikaewsiew, S. Pongnumkul, "Deep learning-based human body pose estimation in providing feedback for physical movement: A review," <i>Heliyon</i>, vol. 10, no. 17, e36589, Aug. 2024. <a href="https://www.sciencedirect.com/science/article/pii/S2405844024126205">ScienceDirect</a> · <a href="https://pubmed.ncbi.nlm.nih.gov/39281455/">PubMed</a></p>
+<p><span class="lbl">Synopsis:</span> A systematic review of 45 articles on systems that estimate body pose, assess a movement, and give the user feedback. It finds that pose estimation is mostly done with CNNs, that assessment ranges from formulas and rules to machine learning, and that feedback is mostly visual. It names the handling of erroneous feedback as an open question. I used it to frame why a separate stabilization layer matters (Sections 1 and 8).</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Peer-reviewed, open-access review in an Elsevier/Cell Press journal, indexed in PubMed. The authors are researchers in Thailand working on pose-based feedback systems. As a review, it summarizes others' results rather than testing filters itself.</p>
+</div>
+
+<div class="ref" id="r2">
+<p class="cit">[2] V. Bazarevsky, I. Grishchenko, K. Raveendran, T. Zhu, F. Zhang, M. Grundmann, "BlazePose: On-device Real-time Body Pose tracking," CVPR Workshop on Computer Vision for Augmented and Virtual Reality, 2020. <a href="https://arxiv.org/abs/2006.10204">arXiv:2006.10204</a></p>
+<p><span class="lbl">Synopsis:</span> Describes the lightweight network behind MediaPipe Pose: 33 body keypoints for one person at over 30 fps on a Pixel 2 phone, trained with both heatmaps and coordinate regression, and run as a detector–tracker pipeline where the previous pose guides the next crop. I used it to explain how video pose estimation works and why outputs are still frame-to-frame noisy (Section 1.1).</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Workshop paper at CVPR, the top computer vision conference, written by the Google engineers who built the model. Primary source for MediaPipe's design, though written by the vendor.</p>
+</div>
+
+<div class="ref" id="r3">
+<p class="cit">[3] Google AI Edge, "Pose landmark detection guide" (MediaPipe Pose Landmarker), and MediaPipe Pose solution documentation. Accessed Oct. 2026. <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker">ai.google.dev</a></p>
+<p><span class="lbl">Synopsis:</span> Official documentation for the MediaPipe Pose Landmarker: 33 landmarks, image-normalized landmarks and metric world landmarks, IMAGE / VIDEO / LIVE_STREAM running modes, tracking-confidence settings, and lite/full/heavy models. I used it for the meaning of landmark fields and confidence scores (Section 2) and to write the extraction script.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill warn">Medium–High</span> Vendor documentation: authoritative for how the API behaves, but not peer-reviewed and it changes between versions. It does not document internal smoothing details.</p>
+</div>
+
+<div class="ref" id="r4">
+<p class="cit">[4] R. Ullah, I. Asghar, R. Nawaz, C. Stacey, S. Akbar, P. Bishop, "A real time action scoring system for movement analysis and feedback in physical therapy using human pose estimation," <i>Scientific Reports</i>, vol. 15, art. 44784, Dec. 2025. <a href="https://www.nature.com/articles/s41598-025-29062-7">Nature</a> · <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12749503/">PMC</a></p>
+<p><span class="lbl">Synopsis:</span> A MediaPipe-based physical-therapy system that computes joint angles with the cosine rule, range of motion, angular velocity by central differences, and similarity to a reference movement with dynamic time warping and normalized cross-correlation; reps are found from peaks and troughs. It uses a fixed bounding box over the clip to reduce jitter and reports joint-angle errors around 1.6–3.2% versus clinicians and rep-count error around 7.5%. I used it as the main application example (Sections 1, 2 and 8).</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Peer-reviewed article in a Nature Portfolio open-access journal. It is an applied systems paper; its evaluation is on its own data and it does not compare temporal filters directly.</p>
+</div>
+
+<div class="ref" id="r5">
+<p class="cit">[5] A. Savitzky, M. J. E. Golay, "Smoothing and Differentiation of Data by Simplified Least Squares Procedures," <i>Analytical Chemistry</i>, vol. 36, no. 8, pp. 1627–1639, 1964. <a href="https://doi.org/10.1021/ac60214a047">doi:10.1021/ac60214a047</a></p>
+<p><span class="lbl">Synopsis:</span> The original paper showing that fitting a local polynomial by least squares in a sliding window is equivalent to convolution with fixed coefficients, giving fast smoothing and derivative estimates that preserve peak shape. I used it for the offline smoothing baseline (Sections 3.3 and 9).</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> A classic, heavily cited peer-reviewed paper from the American Chemical Society; the method is standard in signal processing libraries such as SciPy.</p>
+</div>
+
+<div class="ref" id="r6">
+<p class="cit">[6] G. Casiez, N. Roussel, D. Vogel, "1€ Filter: A Simple Speed-based Low-pass Filter for Noisy Input in Interactive Systems," in <i>Proc. ACM CHI Conference on Human Factors in Computing Systems</i>, Austin, TX, May 2012, pp. 2527–2530. <a href="https://gery.casiez.net/1euro/">Project page</a></p>
+<p><span class="lbl">Synopsis:</span> Introduces the One Euro filter: an exponential low-pass filter whose cutoff frequency increases with the smoothed speed of the signal, removing jitter at low speed and lag at high speed with two tunable parameters. The project page gives reference implementations and a step-by-step tuning procedure. Basis of Section 4 and the Filter Lab.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Peer-reviewed paper at CHI, the leading human–computer interaction conference; the authors are HCI researchers (Univ. of Lille / Inria, Univ. of Waterloo). Widely reused in AR/VR and pose tracking.</p>
+</div>
+
+<div class="ref" id="r7">
+<p class="cit">[7] R. E. Kalman, "A New Approach to Linear Filtering and Prediction Problems," <i>Journal of Basic Engineering</i>, vol. 82, no. 1, pp. 35–45, 1960. <a href="https://doi.org/10.1115/1.3662552">doi:10.1115/1.3662552</a></p>
+<p><span class="lbl">Synopsis:</span> The original paper on the Kalman filter, formulating optimal recursive estimation of a linear system's state from noisy measurements. Cited for the origin of the method in Section 5.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Foundational peer-reviewed paper (ASME journal). Highly mathematical; I relied on [8] for the practical form of the equations.</p>
+</div>
+
+<div class="ref" id="r8">
+<p class="cit">[8] G. Welch, G. Bishop, "An Introduction to the Kalman Filter," Technical Report TR 95-041, Dept. of Computer Science, University of North Carolina at Chapel Hill, 1995 (updated 2006). <a href="https://www.cs.unc.edu/~welch/media/pdf/kalman_intro.pdf">PDF</a></p>
+<p><span class="lbl">Synopsis:</span> A short, widely used tutorial giving the discrete Kalman filter's predict ("time update") and correct ("measurement update") equations, the meaning of Q and R, and tuning advice. Section 5's equations and Figure 5.1 follow its notation.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> University technical report, not journal-reviewed, but written by tracking researchers at UNC and cited thousands of times as a standard introduction.</p>
+</div>
+
+<div class="ref" id="r9">
+<p class="cit">[9] X. Hu, G. Ye, "Learning from Watching: Scalable Extraction of Manipulation Trajectories from Human Videos," arXiv preprint, Dec. 2025. <a href="https://arxiv.org/abs/2512.00024">arXiv:2512.00024</a></p>
+<p><span class="lbl">Synopsis:</span> Extracts hand, tool and object trajectories from human videos for robot learning. A foundation model picks task-relevant keypoints, a pretrained point tracker (LocoTrack) follows them, bidirectional tracking with consistency filtering removes unreliable tracks, and interpolation fills short occlusions and missing detections. I used its consistency check and interpolation as examples for Section 6.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill warn">Medium–High</span> Recent arXiv preprint, not yet peer-reviewed as far as I could find. Its domain (manipulation) differs from exercise, so I used it only for general trajectory-cleaning ideas.</p>
+</div>
+
+<div class="ref" id="r10">
+<p class="cit">[10] A. Eghbalian, K. Desai, "Pose-to-Biomechanics: Bridging 3D Human Pose Estimation and Biomechanical Attribute Prediction," arXiv preprint, Jul. 2026. <a href="https://arxiv.org/abs/2607.08725">arXiv:2607.08725</a></p>
+<p><span class="lbl">Synopsis:</span> Proposes BioModule, a lightweight temporal transformer attached after any 3D pose estimator that predicts 17 kinematic, kinetic and neuromuscular attributes from skeleton sequences, trained on about 520k frames aligned between Human3.6M and musculoskeletal simulation labels. Evaluating seven pose estimators shows how upstream pose errors carry into biomechanical predictions. Used in Sections 7, 10.2 and 10.5.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill warn">Medium–High</span> Very recent preprint from the University of Texas at San Antonio; not yet peer-reviewed. Results are on a lab dataset rather than real exercise video.</p>
+</div>
+
+<div class="ref" id="r11">
+<p class="cit">[11] A. Zeng, L. Yang, X. Ju, J. Li, J. Wang, Q. Xu, "SmoothNet: A Plug-and-Play Network for Refining Human Poses in Videos," in <i>Proc. European Conference on Computer Vision (ECCV)</i>, 2022. <a href="https://arxiv.org/abs/2112.13715">arXiv:2112.13715</a></p>
+<p><span class="lbl">Synopsis:</span> A temporal-only refinement network that is placed after any pose estimator. A motion-aware fully-connected network models long-range temporal patterns of each joint (ignoring inter-joint relations) to remove jitter, especially in occluded or rare-pose frames, and transfers across backbones and datasets. Used as the main example of learned smoothing (Section 10.4).</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Peer-reviewed paper at ECCV, a top computer vision conference, with public code.</p>
+</div>
+
+<div class="ref" id="r12">
+<p class="cit">[12] D. Wei, Z. Shen, Y. Xia, G. Pavlakos, Y. Shen, X. Zhou, "Natural Human Motion Recovery by Aligning High-Order Temporal Dynamics from Monocular Videos," in <i>Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)</i>, 2026. <a href="https://arxiv.org/abs/2605.26879">arXiv:2605.26879</a></p>
+<p><span class="lbl">Synopsis:</span> Introduces HTD-Refine, a post-processing framework for monocular human motion recovery. A temporal transformer (PVA-Net) predicts per-joint 2D positions, 3D velocities and 3D accelerations from video; these act as soft constraints in a global optimization that reduces both jitter and over-smoothing. It improves existing pipelines on in-the-wild benchmarks. Used in Section 10.4 as the state of the art on the smoothness problem.</p>
+<p><span class="lbl">Reliability:</span> <span class="pill good">High</span> Accepted at CVPR 2026 (listed as an oral and best paper candidate). Authors include researchers from Zhejiang University and UT Austin. Very recent, so independent follow-up results are not yet available.</p>
+</div>
+
+</div></main>
+<script src="js/site.js"></script>
+</body>
+</html>
